@@ -27,6 +27,11 @@ interface CommitStoryStore {
     setCurrentTab: (tab: 'changes' | 'history' | 'stories' | 'insights' | 'settings') => void;
     sidebarCollapsed: boolean;
     setSidebarCollapsed: (collapsed: boolean) => void;
+    searchQuery: string;
+    setSearchQuery: (query: string) => void;
+    searchFilter: 'all' | 'message' | 'author' | 'hash';
+    setSearchFilter: (filter: 'all' | 'message' | 'author' | 'hash') => void;
+    filteredCommits: Commit[];
     commitsLoading: boolean;
     setCommitsLoading: (loading: boolean) => void;
     settings: AppSettings;

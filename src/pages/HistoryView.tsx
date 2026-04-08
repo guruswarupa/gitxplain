@@ -7,15 +7,21 @@ import React, { useState } from 'react';
 import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2 } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { Commit } from '../models';
+import SearchBar from '../components/SearchBar';
 
 export default function HistoryView() {
   const {
     commits,
+    filteredCommits,
+    searchQuery,
     selectedCommit,
     setSelectedCommit,
     commitsLoading,
     currentProject,
   } = useCommitStoryStore();
+
+  // Use filtered commits when searching, otherwise use all commits
+  const displayCommits = searchQuery ? filteredCommits : commits;
 
   const [aiExplanation, setAiExplanation] = useState<string>('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -165,18 +171,33 @@ export default function HistoryView() {
   return (
     <div className="flex h-full">
       {/* Commit List */}
-      <div className="w-96 border-r border-border overflow-y-auto bg-card">
+      <div className="w-96 border-r border-border flex flex-col bg-card">
+        {/* Search Bar */}
+        <SearchBar />
+        
+        {/* Header */}
         <div className="p-4 border-b border-border">
           <h2 className="text-lg font-semibold">Commit History</h2>
-          <p className="text-sm text-muted-foreground">{commits.length} commits</p>
+          <p className="text-sm text-muted-foreground">
+            {searchQuery 
+              ? `${displayCommits.length} of ${commits.length} commits` 
+              : `${commits.length} commits`
+            }
+          </p>
         </div>
 
-        <div className="divide-y divide-border">
-          {commits.map((commit) => {
-            const isSelected = selectedCommit?.hash === commit.hash;
-            
-            return (
-              <div
+        {/* Commit List */}
+        <div className="flex-1 overflow-y-auto divide-y divide-border">
+          {displayCommits.length === 0 && searchQuery ? (
+            <div className="p-6 text-center text-muted-foreground">
+              <p className="text-sm">No commits match "{searchQuery}"</p>
+            </div>
+          ) : (
+            displayCommits.map((commit) => {
+              const isSelected = selectedCommit?.hash === commit.hash;
+              
+              return (
+                <div
                 key={commit.hash}
                 onClick={() => handleCommitClick(commit)}
                 className={`p-4 cursor-pointer transition-colors ${
@@ -208,7 +229,8 @@ export default function HistoryView() {
                 </div>
               </div>
             );
-          })}
+          })
+          )}
         </div>
       </div>
 

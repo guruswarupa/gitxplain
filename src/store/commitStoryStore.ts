@@ -40,6 +40,13 @@ interface CommitStoryStore {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean) => void;
   
+  // Search
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  searchFilter: 'all' | 'message' | 'author' | 'hash';
+  setSearchFilter: (filter: 'all' | 'message' | 'author' | 'hash') => void;
+  filteredCommits: Commit[];
+  
   // Loading states
   commitsLoading: boolean;
   setCommitsLoading: (loading: boolean) => void;
@@ -62,7 +69,33 @@ const defaultSettings: AppSettings = {
   theme: 'system',
 };
 
-export const useCommitStoryStore = create<CommitStoryStore>((set) => ({
+// Helper to filter commits based on search
+const filterCommits = (commits: Commit[], query: string, filter: string): Commit[] => {
+  if (!query.trim()) return commits;
+  
+  const lowerQuery = query.toLowerCase();
+  
+  return commits.filter((commit) => {
+    switch (filter) {
+      case 'message':
+        return commit.message.toLowerCase().includes(lowerQuery);
+      case 'author':
+        return commit.author.toLowerCase().includes(lowerQuery);
+      case 'hash':
+        return commit.hash.toLowerCase().includes(lowerQuery);
+      case 'all':
+      default:
+        return (
+          commit.message.toLowerCase().includes(lowerQuery) ||
+          commit.author.toLowerCase().includes(lowerQuery) ||
+          commit.hash.toLowerCase().includes(lowerQuery) ||
+          (commit.body && commit.body.toLowerCase().includes(lowerQuery))
+        );
+    }
+  });
+};
+
+export const useCommitStoryStore = create<CommitStoryStore>((set, get) => ({
   // Projects
   projects: [],
   currentProject: null,
@@ -80,7 +113,10 @@ export const useCommitStoryStore = create<CommitStoryStore>((set) => ({
   
   // Commits
   commits: [],
-  setCommits: (commits) => set({ commits }),
+  setCommits: (commits) => set((state) => ({ 
+    commits,
+    filteredCommits: filterCommits(commits, state.searchQuery, state.searchFilter),
+  })),
   selectedCommit: null,
   setSelectedCommit: (commit) => set({ selectedCommit: commit }),
   
@@ -103,6 +139,19 @@ export const useCommitStoryStore = create<CommitStoryStore>((set) => ({
   setCurrentTab: (tab) => set({ currentTab: tab }),
   sidebarCollapsed: false,
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  
+  // Search
+  searchQuery: '',
+  setSearchQuery: (query) => set((state) => ({
+    searchQuery: query,
+    filteredCommits: filterCommits(state.commits, query, state.searchFilter),
+  })),
+  searchFilter: 'all',
+  setSearchFilter: (filter) => set((state) => ({
+    searchFilter: filter,
+    filteredCommits: filterCommits(state.commits, state.searchQuery, filter),
+  })),
+  filteredCommits: [],
   
   // Loading states
   commitsLoading: false,

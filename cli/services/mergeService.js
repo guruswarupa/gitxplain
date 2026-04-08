@@ -1,18 +1,25 @@
 import process from "node:process";
 import {
+  deletePaths,
   getCurrentBranchName,
   getCurrentHeadSha,
   getDefaultBaseRef,
   getMergeBase,
   gitCheckout,
-  gitCheckoutNewBranch,
-  gitCherryPick,
+  gitCheckoutOrphan,
   gitCherryPickAbort,
+  gitCherryPickNoCommit,
+  gitCommit,
+  gitCreateAnnotatedTag,
   gitDeleteBranch,
+  gitDeleteTag,
+  gitRemoveCachedAll,
   gitResetHard,
   isWorkingTreeClean,
   listBranchCommits,
   listCommitsAfter,
+  listFilesInRef,
+  listTags,
   localBranchExists,
   resolveCommitSha,
   runGitCommand
@@ -28,6 +35,10 @@ const ANSI = {
 
 const RELEASE_BRANCH = "release";
 const VERSION_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g;
+const RELEASE_SUBJECT_PATTERN = /^release\s+(.+)$/i;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const INTEGER_PATTERN = /^\d+$/;
+const TAG_VERSION_PATTERN = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|\d+)$/;
 
 function supportsColor() {
   return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
@@ -53,22 +64,135 @@ function stripDiffPrefix(line) {
   return line.slice(1).trim();
 }
 
+function parseDiffPath(line) {
+  const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  return match ? match[2] : null;
+}
+
+function isExactFilename(filePath, filename) {
+  return filePath === filename || filePath.endsWith(`/${filename}`);
+}
+
+function extractVersionCandidate(filePath, line) {
+  const trimmed = line.trim();
+
+  if (filePath == null || trimmed === "") {
+    return null;
+  }
+
+  if (isExactFilename(filePath, "package.json")) {
+    return trimmed.match(/^"version"\s*:\s*"([^"]+)"[,]?$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "pubspec.yaml")) {
+    return trimmed.match(/^version:\s*([^\s#]+)$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "Cargo.toml")) {
+    return trimmed.match(/^version\s*=\s*"([^"]+)"$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "pom.xml")) {
+    return trimmed.match(/^<version>([^<]+)<\/version>$/)?.[1] ?? null;
+  }
+
+  if (filePath.endsWith(".csproj")) {
+    return (
+      trimmed.match(/^<Version>([^<]+)<\/Version>$/)?.[1] ??
+      trimmed.match(/^<ApplicationDisplayVersion>([^<]+)<\/ApplicationDisplayVersion>$/)?.[1] ??
+      trimmed.match(/^<ApplicationVersion>([^<]+)<\/ApplicationVersion>$/)?.[1] ??
+      null
+    );
+  }
+
+  if (isExactFilename(filePath, "Info.plist")) {
+    return (
+      trimmed.match(/^<string>([^<]+)<\/string>$/)?.[1] ??
+      null
+    );
+  }
+
+  if (filePath.endsWith("AndroidManifest.xml")) {
+    return (
+      trimmed.match(/versionName="([^"]+)"/)?.[1] ??
+      trimmed.match(/versionCode="([^"]+)"/)?.[1] ??
+      null
+    );
+  }
+
+  if (filePath.endsWith("build.gradle") || filePath.endsWith("build.gradle.kts")) {
+    return (
+      trimmed.match(/^versionName\s*[= ]\s*["']?([^"'\s]+)["']?$/)?.[1] ??
+      trimmed.match(/^versionCode\s*[= ]\s*["']?([^"'\s]+)["']?$/)?.[1] ??
+      trimmed.match(/^version\s*=\s*["']([^"']+)["']$/)?.[1] ??
+      null
+    );
+  }
+
+  if (isExactFilename(filePath, "gradle.properties")) {
+    return (
+      trimmed.match(/^(?:VERSION_NAME|versionName)\s*=\s*(\S+)$/)?.[1] ??
+      trimmed.match(/^(?:VERSION_CODE|versionCode)\s*=\s*(\S+)$/)?.[1] ??
+      null
+    );
+  }
+
+  if (
+    isExactFilename(filePath, "VERSION") ||
+    isExactFilename(filePath, ".version") ||
+    isExactFilename(filePath, "version.txt")
+  ) {
+    return (SEMVER_PATTERN.test(trimmed) || INTEGER_PATTERN.test(trimmed)) ? trimmed : null;
+  }
+
+  return null;
+}
+
+function rankVersionValue(value) {
+  if (SEMVER_PATTERN.test(value)) {
+    return 2;
+  }
+
+  if (INTEGER_PATTERN.test(value)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function selectReleaseVersion(values) {
+  return [...values].sort((left, right) => rankVersionValue(right) - rankVersionValue(left))[0] ?? null;
+}
+
 export function detectVersionChanges(diff) {
   const removedVersions = [];
   const addedVersions = [];
+  let currentFile = null;
 
   for (const line of diff.split("\n")) {
+    const diffPath = parseDiffPath(line);
+    if (diffPath) {
+      currentFile = diffPath;
+      continue;
+    }
+
     if (line.startsWith("---") || line.startsWith("+++")) {
       continue;
     }
 
     if (line.startsWith("-")) {
-      removedVersions.push(...extractVersions(stripDiffPrefix(line)));
+      const candidate = extractVersionCandidate(currentFile, stripDiffPrefix(line));
+      if (candidate) {
+        removedVersions.push(candidate);
+      }
       continue;
     }
 
     if (line.startsWith("+")) {
-      addedVersions.push(...extractVersions(stripDiffPrefix(line)));
+      const candidate = extractVersionCandidate(currentFile, stripDiffPrefix(line));
+      if (candidate) {
+        addedVersions.push(candidate);
+      }
     }
   }
 
@@ -80,8 +204,13 @@ export function detectVersionChanges(diff) {
   return {
     from,
     to,
-    hasVersionChange: from.length > 0 && to.length > 0
+    hasVersionChange: from.length > 0 && to.length > 0,
+    releaseVersion: selectReleaseVersion(to)
   };
+}
+
+function getReleaseVersion(change) {
+  return change.releaseVersion ?? null;
 }
 
 function getCommitSubject(ref, cwd) {
@@ -101,12 +230,16 @@ function getCommitDiff(ref, cwd) {
 }
 
 function inspectCommit(sha, cwd) {
+  const subject = getCommitSubject(sha, cwd);
+  const versionChange = detectVersionChanges(getCommitDiff(sha, cwd));
+
   return {
     sha,
     shortSha: sha.slice(0, 7),
-    subject: getCommitSubject(sha, cwd),
+    subject,
     files: getCommitFiles(sha, cwd),
-    versionChange: detectVersionChanges(getCommitDiff(sha, cwd))
+    versionChange,
+    releaseVersion: getReleaseVersion(versionChange)
   };
 }
 
@@ -114,71 +247,110 @@ function summarizeVersionPair(change) {
   return `${change.from.join(", ")} -> ${change.to.join(", ")}`;
 }
 
-function getLatestVersionSummary(commits) {
-  const latest = [...commits].reverse().find((commit) => commit.versionChange.hasVersionChange) ?? null;
-  return latest ? summarizeVersionPair(latest.versionChange) : null;
+function getReleasedVersions(releaseCommits) {
+  const explicitVersions = releaseCommits
+    .map((commit) => commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null)
+    .filter(Boolean);
+
+  const fallbackVersions = releaseCommits
+    .map((commit) => commit.releaseVersion)
+    .filter(Boolean);
+
+  return new Set([...explicitVersions, ...fallbackVersions]);
 }
 
-function findLastVersionSummaryIndex(commits, targetSummary) {
-  if (!targetSummary) {
-    return -1;
-  }
+function extractTaggedVersions(tagNames) {
+  return new Set(
+    tagNames
+      .map((tagName) => tagName.match(TAG_VERSION_PATTERN)?.[1] ?? null)
+      .filter(Boolean)
+  );
+}
 
-  for (let index = commits.length - 1; index >= 0; index -= 1) {
-    const commit = commits[index];
-    if (!commit.versionChange.hasVersionChange) {
+export function buildReleaseWindows(sourceCommits) {
+  const windows = [];
+  let windowStartIndex = 0;
+  let activeVersion = null;
+
+  for (let index = 0; index < sourceCommits.length; index += 1) {
+    const commit = sourceCommits[index];
+    if (!commit.releaseVersion) {
       continue;
     }
 
-    if (summarizeVersionPair(commit.versionChange) === targetSummary) {
-      return index;
+    if (activeVersion == null) {
+      activeVersion = commit.releaseVersion;
+      continue;
     }
+
+    if (commit.releaseVersion === activeVersion) {
+      continue;
+    }
+
+    const previousIndex = index - 1;
+    windows.push({
+      version: activeVersion,
+      commits: sourceCommits.slice(windowStartIndex, previousIndex + 1),
+      startRef: sourceCommits[windowStartIndex]?.shortSha ?? null,
+      endRef: sourceCommits[previousIndex]?.shortSha ?? null
+    });
+    windowStartIndex = index;
+    activeVersion = commit.releaseVersion;
   }
 
-  return -1;
+  if (activeVersion != null) {
+    windows.push({
+      version: activeVersion,
+      commits: sourceCommits.slice(windowStartIndex),
+      startRef: sourceCommits[windowStartIndex]?.shortSha ?? null,
+      endRef: sourceCommits.at(-1)?.shortSha ?? null
+    });
+  }
+
+  return windows;
 }
 
-export function selectReleaseCommits(sourceCommits, lastReleasedVersionSummary = null) {
-  const latestSourceVersionIndex = [...sourceCommits]
-    .map((commit, index) => ({ commit, index }))
-    .reverse()
-    .find(({ commit }) => commit.versionChange.hasVersionChange)?.index ?? -1;
+export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
+  const windows = buildReleaseWindows(sourceCommits);
+  const releasedVersions = getReleasedVersions(releaseCommits);
+  const unreleasedWindows = windows.filter((window) => !releasedVersions.has(window.version));
 
-  if (latestSourceVersionIndex === -1) {
-    return {
-      commitsToApply: [],
-      latestSourceVersionSummary: null,
-      lastReleasedVersionSummary,
-      startIndex: -1,
-      endIndex: -1
-    };
-  }
+  const selectedWindows =
+    releasedVersions.size === 0
+      ? unreleasedWindows
+      : unreleasedWindows.length > 0
+        ? [unreleasedWindows.at(-1)]
+        : [];
 
-  const latestSourceVersionSummary = summarizeVersionPair(sourceCommits[latestSourceVersionIndex].versionChange);
-  const lastReleasedIndex = findLastVersionSummaryIndex(sourceCommits, lastReleasedVersionSummary);
-
-  if (lastReleasedIndex === latestSourceVersionIndex) {
-    return {
-      commitsToApply: [],
-      latestSourceVersionSummary,
-      lastReleasedVersionSummary,
-      startIndex: -1,
-      endIndex: latestSourceVersionIndex
-    };
-  }
-
-  const startIndex = lastReleasedIndex + 1;
   return {
-    commitsToApply: sourceCommits.slice(startIndex, latestSourceVersionIndex + 1),
-    latestSourceVersionSummary,
-    lastReleasedVersionSummary,
-    startIndex,
-    endIndex: latestSourceVersionIndex
+    windows: selectedWindows,
+    releasedVersions: [...releasedVersions],
+    latestDetectedVersion: windows.at(-1)?.version ?? null
   };
 }
 
-function buildReleaseMessage(plan) {
-  return `release: promote ${plan.latestSourceVersionSummary}`;
+export function selectReleaseTags(sourceCommits, existingTagNames = []) {
+  const windows = buildReleaseWindows(sourceCommits);
+  const taggedVersions = extractTaggedVersions(existingTagNames);
+  const tags = windows
+    .filter((window) => !taggedVersions.has(window.version))
+    .map((window) => {
+      const targetCommit = window.commits.at(-1) ?? null;
+      return {
+        ...window,
+        tagName: window.version,
+        targetSha: targetCommit?.sha ?? null,
+        targetShortSha: targetCommit?.shortSha ?? null,
+        targetSubject: targetCommit?.subject ?? null
+      };
+    })
+    .filter((tag) => tag.targetSha != null);
+
+  return {
+    tags,
+    taggedVersions: [...taggedVersions],
+    latestDetectedVersion: windows.at(-1)?.version ?? null
+  };
 }
 
 export function buildReleaseMergePlan(cwd) {
@@ -189,12 +361,11 @@ export function buildReleaseMergePlan(cwd) {
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const mergeBase = getMergeBase(baseRef, "HEAD", cwd);
-  const sourceCommitShas = listCommitsAfter(mergeBase, "HEAD", cwd);
+  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
+  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
-  const lastReleasedVersionSummary = getLatestVersionSummary(releaseCommits);
-  const selection = selectReleaseCommits(sourceCommits, lastReleasedVersionSummary);
+  const selection = selectReleaseWindows(sourceCommits, releaseCommits);
 
   return {
     releaseBranch: RELEASE_BRANCH,
@@ -202,20 +373,48 @@ export function buildReleaseMergePlan(cwd) {
     baseRef,
     mergeBase,
     releaseExists,
-    lastReleasedVersionSummary,
-    latestSourceVersionSummary: selection.latestSourceVersionSummary,
-    commits: selection.commitsToApply,
-    startRef: selection.commitsToApply[0]?.shortSha ?? null,
-    endRef: selection.commitsToApply.at(-1)?.shortSha ?? null,
-    createFromRef: releaseExists ? RELEASE_BRANCH : mergeBase,
-    releaseMessage: null
+    releasedVersions: selection.releasedVersions,
+    latestDetectedVersion: selection.latestDetectedVersion,
+    windows: selection.windows,
+    createFromRef: releaseExists ? RELEASE_BRANCH : null
+  };
+}
+
+export function buildReleaseTagPlan(cwd) {
+  const sourceBranch = getCurrentBranchName(cwd);
+  if (sourceBranch === RELEASE_BRANCH) {
+    throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --tag.`);
+  }
+
+  const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
+  const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
+  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
+  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
+  const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
+  const selection = selectReleaseTags(sourceCommits, listTags(cwd));
+
+  return {
+    sourceBranch,
+    baseRef,
+    mergeBase,
+    releaseExists,
+    taggedVersions: selection.taggedVersions,
+    latestDetectedVersion: selection.latestDetectedVersion,
+    tags: selection.tags
   };
 }
 
 export function finalizeReleaseMergePlan(plan) {
   return {
     ...plan,
-    releaseMessage: plan.latestSourceVersionSummary ? buildReleaseMessage(plan) : null
+    totalCommits: plan.windows.reduce((count, window) => count + window.commits.length, 0)
+  };
+}
+
+export function finalizeReleaseTagPlan(plan) {
+  return {
+    ...plan,
+    totalCommits: plan.tags.reduce((count, tag) => count + tag.commits.length, 0)
   };
 }
 
@@ -225,25 +424,61 @@ export function formatReleaseMergePlan(plan) {
     `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${plan.sourceBranch}`,
     `${colorize("Target Branch:", ANSI.bold + ANSI.cyan)} ${plan.releaseBranch}`,
     `${colorize("Base Ref:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
-    `${colorize("Last Released Version:", ANSI.bold + ANSI.cyan)} ${plan.lastReleasedVersionSummary ?? "none"}`,
-    `${colorize("Latest Source Version:", ANSI.bold + ANSI.cyan)} ${plan.latestSourceVersionSummary ?? "none"}`
+    `${colorize("Released Versions:", ANSI.bold + ANSI.cyan)} ${
+      plan.releasedVersions.length > 0 ? plan.releasedVersions.join(", ") : "none"
+    }`,
+    `${colorize("Latest Detected Version:", ANSI.bold + ANSI.cyan)} ${plan.latestDetectedVersion ?? "none"}`
   ];
 
-  if (plan.commits.length === 0) {
-    lines.push(colorize("No new version-bump range detected. Nothing to merge.", ANSI.green));
+  if (plan.windows.length === 0) {
+    lines.push(colorize("No unreleased release commits detected. Nothing to merge.", ANSI.green));
     return lines.join("\n");
   }
 
-  lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${plan.startRef}..${plan.endRef}`);
-  lines.push(`${colorize("Release Commit:", ANSI.bold + ANSI.cyan)} ${plan.releaseMessage}`);
-
-  for (const commit of plan.commits) {
+  for (const window of plan.windows) {
     lines.push("");
-    lines.push(colorize(`${commit.shortSha} ${commit.subject}`, ANSI.bold + ANSI.yellow));
-    if (commit.versionChange.hasVersionChange) {
-      lines.push(`${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+    lines.push(colorize(`release ${window.version}`, ANSI.bold + ANSI.yellow));
+    lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${window.startRef}..${window.endRef}`);
+
+    for (const commit of window.commits) {
+      lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
+      if (commit.versionChange.hasVersionChange) {
+        lines.push(`  ${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+      }
     }
-    lines.push(`${colorize("Files:", ANSI.bold + ANSI.cyan)} ${commit.files.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function formatReleaseTagPlan(plan) {
+  const lines = [
+    colorize("Release Tag Plan", ANSI.bold + ANSI.cyan),
+    `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${plan.sourceBranch}`,
+    `${colorize("Base Ref:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
+    `${colorize("Tagged Versions:", ANSI.bold + ANSI.cyan)} ${
+      plan.taggedVersions.length > 0 ? plan.taggedVersions.join(", ") : "none"
+    }`,
+    `${colorize("Latest Detected Version:", ANSI.bold + ANSI.cyan)} ${plan.latestDetectedVersion ?? "none"}`
+  ];
+
+  if (plan.tags.length === 0) {
+    lines.push(colorize("No unreleased release tags detected. Nothing to tag.", ANSI.green));
+    return lines.join("\n");
+  }
+
+  for (const tag of plan.tags) {
+    lines.push("");
+    lines.push(colorize(`tag ${tag.tagName}`, ANSI.bold + ANSI.yellow));
+    lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${tag.startRef}..${tag.endRef}`);
+    lines.push(`${colorize("Target Commit:", ANSI.bold + ANSI.cyan)} ${tag.targetShortSha} ${tag.targetSubject}`);
+
+    for (const commit of tag.commits) {
+      lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
+      if (commit.versionChange.hasVersionChange) {
+        lines.push(`  ${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+      }
+    }
   }
 
   return lines.join("\n");
@@ -264,8 +499,8 @@ function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdRelea
 }
 
 export function executeReleaseMerge(plan, cwd) {
-  if (plan.commits.length === 0) {
-    throw new Error("No new version-bump range detected. Nothing to merge.");
+  if (plan.windows.length === 0) {
+    throw new Error("No unreleased release commits detected. Nothing to merge.");
   }
 
   if (!isWorkingTreeClean(cwd)) {
@@ -276,16 +511,23 @@ export function executeReleaseMerge(plan, cwd) {
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const originalReleaseSha = releaseExists ? resolveCommitSha(RELEASE_BRANCH, cwd) : null;
   const originalHeadSha = getCurrentHeadSha(cwd);
+  const originalHeadFiles = releaseExists ? [] : listFilesInRef("HEAD", cwd);
 
   try {
     if (releaseExists) {
       gitCheckout(RELEASE_BRANCH, cwd);
     } else {
-      gitCheckoutNewBranch(RELEASE_BRANCH, plan.createFromRef, cwd);
+      gitCheckoutOrphan(RELEASE_BRANCH, cwd);
+      gitRemoveCachedAll(cwd);
+      deletePaths(originalHeadFiles, cwd);
     }
 
-    for (const commit of plan.commits) {
-      gitCherryPick(commit.sha, cwd);
+    for (const window of plan.windows) {
+      for (const commit of window.commits) {
+        gitCherryPickNoCommit(commit.sha, cwd);
+      }
+
+      gitCommit(`release ${window.version}`, cwd);
     }
   } catch (error) {
     gitCherryPickAbort(cwd);
@@ -299,7 +541,7 @@ export function executeReleaseMerge(plan, cwd) {
         gitDeleteBranch(RELEASE_BRANCH, cwd);
       }
     } catch {
-      // Keep the original error and show recovery guidance.
+      // Preserve original failure and print recovery guidance below.
     }
 
     console.error(error.message);
@@ -316,6 +558,31 @@ export function executeReleaseMerge(plan, cwd) {
   const updatedReleaseSha = getCurrentHeadSha(cwd);
   if (updatedReleaseSha === originalHeadSha) {
     throw new Error("Release merge did not create any new commits.");
+  }
+}
+
+export function executeReleaseTagPlan(plan, cwd) {
+  if (plan.tags.length === 0) {
+    throw new Error("No unreleased release tags detected. Nothing to tag.");
+  }
+
+  const createdTags = [];
+
+  try {
+    for (const tag of plan.tags) {
+      gitCreateAnnotatedTag(tag.tagName, tag.targetSha, `release ${tag.tagName}`, cwd);
+      createdTags.push(tag.tagName);
+    }
+  } catch (error) {
+    for (const tagName of createdTags.reverse()) {
+      try {
+        gitDeleteTag(tagName, cwd);
+      } catch {
+        // Preserve the original failure; partial cleanup is best-effort.
+      }
+    }
+
+    throw error;
   }
 }
 

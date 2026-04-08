@@ -17,6 +17,7 @@ Supported providers:
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports release-branch merge previews driven by detected version bumps in diffs
+- Supports automatic release tagging driven by the same version-bump detection used for release merges
 - Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for recent history inspection
 - Supports single commits, commit ranges, and branch-vs-base comparisons
@@ -68,6 +69,10 @@ gitxplain commit
 gitxplain --commit
 gitxplain merge
 gitxplain --merge
+gitxplain tag
+gitxplain --tag
+gitxplore tag
+gitxplore --tag
 gitxplain log --log
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
@@ -82,6 +87,8 @@ gitxplain <commit-id> --split
 gitxplain --commit --execute
 gitxplain merge
 gitxplain --merge --execute
+gitxplain tag
+gitxplain --tag --execute
 gitxplain <commit-id> --json
 gitxplain <commit-id> --markdown
 gitxplain <commit-id> --html
@@ -105,6 +112,7 @@ Examples:
 npm start -- HEAD~1 --summary
 npm start -- commit
 npm start -- merge
+npm start -- tag
 npm start -- log --log
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
@@ -163,6 +171,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--security`: security-focused analysis of the change
 - `--split`: propose how to split a commit into multiple atomic commits
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
+- `--tag`: preview or create release tags from the same detected version windows
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print recent Git log entries for the current repository
 - `--execute`: apply a proposed split by rewriting history
@@ -246,7 +255,27 @@ Actually merge the current branch into the `release` branch:
 gitxplain --merge --execute
 ```
 
-This command scans commits on your current branch after the branch split point, finds the latest semantic version bump in the history, and promotes the commit range up to that version onto `release`. If `release` already contains an earlier version bump, it starts after that released version and only picks the next range. If no prior released version is found, it promotes everything from the first branch commit through the latest version-bump commit.
+This command scans commits on your current branch after the branch split point and uses version-file diffs as release checkpoints. Each time a commit changes the version, that closes a release window. On the `release` branch, the command creates commits named `release <version>`. If no release versions have been promoted yet, it creates release commits for all detected versions in order. If some release versions already exist on `release`, it skips those and creates only the latest unreleased `release <version>` commit.
+
+## Release Tagging
+
+Preview the release tags for the current branch:
+
+```bash
+gitxplain tag
+gitxplain --tag
+gitxplore tag
+gitxplore --tag
+```
+
+Actually create the tags:
+
+```bash
+gitxplain --tag --execute
+gitxplore --tag --execute
+```
+
+This command uses the same release-window detection as `merge`. It scans commits on your current branch after the branch split point, detects version bumps from version-file diffs, and maps each unreleased version to the last commit in that release window. By default it creates annotated tags named exactly after the detected version, such as `1.2.3`.
 
 ## Commit Working Tree
 

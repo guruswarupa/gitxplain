@@ -1,10 +1,11 @@
 {
   "name": "gitxplain",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI-powered Git commit explainer CLI",
   "type": "module",
   "bin": {
-    "gitxplain": "./cli/index.js"
+    "gitxplain": "./cli/index.js",
+    "gitxplore": "./cli/index.js"
   },
   "scripts": {
     "start": "node ./cli/index.js",

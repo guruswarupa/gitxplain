@@ -34,6 +34,20 @@ export function runGitCommand(args, cwd) {
   }
 }
 
+export function runGitCommandWithInput(args, cwd, input) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      input,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    const stderr = error.stderr?.toString().trim();
+    throw new Error(stderr || `Git command failed: git ${args.join(" ")}`);
+  }
+}
+
 export function runGitCommandUnchecked(args, cwd) {
   try {
     return {
@@ -184,6 +198,22 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
+  return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
+}
+
+export function gitDeleteTag(tagName, cwd) {
+  return runGitCommand(["tag", "-d", tagName], cwd);
+}
+
+export function listTags(cwd) {
+  const output = runGitCommand(["tag", "--list"], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function hasStagedChanges(cwd) {
   const result = runGitCommandUnchecked(["diff", "--cached", "--quiet"], cwd);
 
@@ -323,6 +353,14 @@ export function listBranchCommits(ref, cwd) {
     .filter(Boolean);
 }
 
+export function listFilesInRef(ref, cwd) {
+  const output = runGitCommand(["ls-tree", "-r", "--name-only", ref], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   const result = runGitCommandUnchecked(["merge-base", "--is-ancestor", ancestorRef, descendantRef], cwd);
 
@@ -347,6 +385,10 @@ export function gitCherryPickNoCommit(ref, cwd) {
 
 export function gitCherryPick(ref, cwd) {
   return runGitCommand(["cherry-pick", ref], cwd);
+}
+
+export function gitCherryPickRecordSource(ref, cwd) {
+  return runGitCommand(["cherry-pick", "-x", ref], cwd);
 }
 
 export function gitMerge(ref, cwd, message = null) {
@@ -377,8 +419,21 @@ export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
   return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
 }
 
+export function gitCheckoutOrphan(branchName, cwd) {
+  return runGitCommand(["checkout", "--orphan", branchName], cwd);
+}
+
 export function gitDeleteBranch(branchName, cwd) {
   return runGitCommand(["branch", "-D", branchName], cwd);
+}
+
+export function gitRemoveCachedAll(cwd) {
+  return runGitCommand(["rm", "-r", "--cached", "--ignore-unmatch", "."], cwd);
+}
+
+export function createEmptyRootCommit(message, cwd) {
+  const emptyTree = runGitCommandWithInput(["mktree"], cwd, "");
+  return runGitCommand(["commit-tree", emptyTree, "-m", message], cwd);
 }
 
 export function writeCurrentIndexTree(cwd) {

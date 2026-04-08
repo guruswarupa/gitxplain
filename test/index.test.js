@@ -67,6 +67,23 @@ test("parseArgs handles merge subcommand", () => {
   assert.equal(parsed.mode, null);
 });
 
+test("parseArgs handles tag flag execution", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--tag", "--execute"]);
+
+  assert.equal(parsed.mode, "tag");
+  assert.equal(parsed.tag, true);
+  assert.equal(parsed.execute, true);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles tag subcommand", () => {
+  const parsed = parseArgs(["node", "gitxplain", "tag"]);
+
+  assert.equal(parsed.tagCommand, true);
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.mode, null);
+});
+
 test("parseArgs handles repository log subcommand", () => {
   const parsed = parseArgs(["node", "gitxplain", "log"]);
 

@@ -6,8 +6,9 @@ import {
   getMergeBase,
   gitCheckout,
   gitCheckoutNewBranch,
-  gitCherryPick,
+  gitCherryPickNoCommit,
   gitCherryPickAbort,
+  gitCommit,
   gitDeleteBranch,
   gitResetHard,
   isWorkingTreeClean,
@@ -144,41 +145,35 @@ export function selectReleaseCommits(sourceCommits, lastReleasedVersionSummary =
     .reverse()
     .find(({ commit }) => commit.versionChange.hasVersionChange)?.index ?? -1;
 
-  if (latestSourceVersionIndex === -1) {
-    return {
-      commitsToApply: [],
-      latestSourceVersionSummary: null,
-      lastReleasedVersionSummary,
-      startIndex: -1,
-      endIndex: -1
-    };
-  }
-
-  const latestSourceVersionSummary = summarizeVersionPair(sourceCommits[latestSourceVersionIndex].versionChange);
+  const latestSourceVersionSummary =
+    latestSourceVersionIndex === -1 ? null : summarizeVersionPair(sourceCommits[latestSourceVersionIndex].versionChange);
   const lastReleasedIndex = findLastVersionSummaryIndex(sourceCommits, lastReleasedVersionSummary);
+  const startIndex = lastReleasedIndex + 1;
+  const endIndex = sourceCommits.length - 1;
 
-  if (lastReleasedIndex === latestSourceVersionIndex) {
+  if (startIndex > endIndex) {
     return {
       commitsToApply: [],
       latestSourceVersionSummary,
       lastReleasedVersionSummary,
       startIndex: -1,
-      endIndex: latestSourceVersionIndex
+      endIndex
     };
   }
 
-  const startIndex = lastReleasedIndex + 1;
   return {
-    commitsToApply: sourceCommits.slice(startIndex, latestSourceVersionIndex + 1),
+    commitsToApply: sourceCommits.slice(startIndex, endIndex + 1),
     latestSourceVersionSummary,
     lastReleasedVersionSummary,
     startIndex,
-    endIndex: latestSourceVersionIndex
+    endIndex
   };
 }
 
 function buildReleaseMessage(plan) {
-  return `release: promote ${plan.latestSourceVersionSummary}`;
+  return plan.latestSourceVersionSummary
+    ? `release: promote ${plan.latestSourceVersionSummary}`
+    : `release: sync ${plan.sourceBranch}`;
 }
 
 export function buildReleaseMergePlan(cwd) {
@@ -230,7 +225,7 @@ export function formatReleaseMergePlan(plan) {
   ];
 
   if (plan.commits.length === 0) {
-    lines.push(colorize("No new version-bump range detected. Nothing to merge.", ANSI.green));
+    lines.push(colorize("No unreleased commits detected. Nothing to merge.", ANSI.green));
     return lines.join("\n");
   }
 
@@ -265,7 +260,7 @@ function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdRelea
 
 export function executeReleaseMerge(plan, cwd) {
   if (plan.commits.length === 0) {
-    throw new Error("No new version-bump range detected. Nothing to merge.");
+    throw new Error("No unreleased commits detected. Nothing to merge.");
   }
 
   if (!isWorkingTreeClean(cwd)) {
@@ -285,8 +280,10 @@ export function executeReleaseMerge(plan, cwd) {
     }
 
     for (const commit of plan.commits) {
-      gitCherryPick(commit.sha, cwd);
+      gitCherryPickNoCommit(commit.sha, cwd);
     }
+
+    gitCommit(plan.releaseMessage, cwd);
   } catch (error) {
     gitCherryPickAbort(cwd);
 

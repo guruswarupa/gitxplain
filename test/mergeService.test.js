@@ -106,3 +106,59 @@ test("selectReleaseCommits picks commits after the last released version bump", 
     ["3333333", "4444444"]
   );
 });
+
+test("selectReleaseCommits includes trailing commits after the latest version bump", () => {
+  const sourceCommits = [
+    {
+      shortSha: "1111111",
+      subject: "chore: bump 0.1.0 to 0.1.1",
+      files: ["package.json"],
+      versionChange: { from: ["0.1.0"], to: ["0.1.1"], hasVersionChange: true }
+    },
+    {
+      shortSha: "2222222",
+      subject: "feat: add follow-up work",
+      files: ["src/app.js"],
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      shortSha: "3333333",
+      subject: "docs: update docs",
+      files: ["README.md"],
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    }
+  ];
+
+  const selection = selectReleaseCommits(sourceCommits, "0.1.0 -> 0.1.1");
+
+  assert.equal(selection.latestSourceVersionSummary, "0.1.0 -> 0.1.1");
+  assert.deepEqual(
+    selection.commitsToApply.map((commit) => commit.shortSha),
+    ["2222222", "3333333"]
+  );
+});
+
+test("selectReleaseCommits falls back to all source commits for an initial sync", () => {
+  const sourceCommits = [
+    {
+      shortSha: "1111111",
+      subject: "feat: first change",
+      files: ["src/a.js"],
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      shortSha: "2222222",
+      subject: "fix: second change",
+      files: ["src/b.js"],
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    }
+  ];
+
+  const selection = selectReleaseCommits(sourceCommits, null);
+
+  assert.equal(selection.latestSourceVersionSummary, null);
+  assert.deepEqual(
+    selection.commitsToApply.map((commit) => commit.shortSha),
+    ["1111111", "2222222"]
+  );
+});

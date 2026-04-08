@@ -1,6 +1,6 @@
 # gitxplain
 
-`gitxplain` is a Node.js CLI that analyzes a Git commit and generates structured, human-readable explanations with AI.
+`gitxplain` is a Node.js CLI that analyzes Git commits, commit ranges, and branch diffs to generate structured, human-readable explanations with AI.
 
 Supported providers:
 
@@ -14,50 +14,21 @@ Supported providers:
 ## Features
 
 - Explains what a commit does, why it exists, and how the fix works
-- Supports focused output modes like summary, issue, fix, and impact
+- Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
+- Supports AI-assisted commit splitting plans, with optional execution for the latest commit
+- Supports release-branch merge previews driven by detected version bumps in diffs
+- Supports AI-assisted commit planning for uncommitted working tree changes
+- Supports quick repository log output for recent history inspection
+- Supports single commits, commit ranges, and branch-vs-base comparisons
+- Truncates oversized diffs before sending them to the model and reports that truncation
+- Streams output for supported providers
+- Caches responses locally to reduce repeat API costs
+- Supports plain, JSON, Markdown, and HTML output
+- Supports clipboard copy, verbosity controls, and hook installation
+- Supports project-level and user-level config files
 - Falls back to an interactive prompt when no analysis flag is supplied
 - Returns plain text or JSON output
 - Uses native Node APIs only, so the MVP has no runtime dependencies
-- Connect GitHub account with personal access token
-- Interactive chat interface with repository context
-
-## New Features
-
-### Git Connection (`--connect-git`)
-Connect your GitHub account to enable repository-aware features:
-```bash
-gitxplain --connect-git
-```
-
-This will prompt for your GitHub Personal Access Token (PAT) and verify it with GitHub's API. Upon successful authentication, your connection details will be saved locally for future use.
-
-**Required PAT Permissions:**
-- `repo` - Full control of private repositories
-- `public_repo` - Access to public repositories
-- `user` - Read user profile data
-
-### Interactive Chat (`--boot`)
-Start an interactive chat session with the LLM that has full context of your repository's commit history and branches:
-```bash
-gitxplain --boot
-```
-
-The `--boot` command automatically uses **Groq** as the default provider (fast and free). Simply set your Groq API key:
-```bash
-export GROQ_API=your_groq_api_key
-gitxplain --boot
-```
-
-You can override the default provider if needed:
-```bash
-gitxplain --boot --provider openai
-gitxplain --boot --provider ollama --model llama2
-```
-
-**Commands in chat:**
-- Type your questions about commits, changes, or the codebase
-- `clear` - Clear conversation history
-- `exit` - Close the chat session
 
 ## Requirements
 
@@ -78,6 +49,11 @@ Optional environment variables:
 - `OLLAMA_MODEL`, `OLLAMA_BASE_URL` default: `http://127.0.0.1:11434/v1`
 - `CHUTES_API_KEY`, `CHUTES_MODEL`, `CHUTES_BASE_URL`
 
+Optional config files:
+
+- Project: `.gitxplainrc` or `.gitxplainrc.json`
+- User: `~/.gitxplain/config.json`
+
 You can start from:
 
 ```bash
@@ -88,29 +64,56 @@ cp .env.example .env
 
 ```bash
 gitxplain help
+gitxplain commit
+gitxplain --commit
+gitxplain merge
+gitxplain --merge
+gitxplain log --log
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
 gitxplain <commit-id> --issues
 gitxplain <commit-id> --fix
 gitxplain <commit-id> --impact
 gitxplain <commit-id> --full
+gitxplain <commit-id> --lines
+gitxplain <commit-id> --review
+gitxplain <commit-id> --security
+gitxplain <commit-id> --split
+gitxplain --commit --execute
+gitxplain merge
+gitxplain --merge --execute
 gitxplain <commit-id> --json
+gitxplain <commit-id> --markdown
+gitxplain <commit-id> --html
+gitxplain <commit-id> --stream
+gitxplain <commit-id> --clipboard
+gitxplain <commit-id> --verbose
+gitxplain <commit-id> --quiet
+gitxplain log --log
+gitxplain <start>..<end> --markdown
+gitxplain --branch main --review
+gitxplain --pr origin/main --security
+gitxplain install-hook
 gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
 gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-gitxplain --connect-git
-gitxplain --boot
+gitxplain <commit-id> --split --execute
 ```
 
 Examples:
 
 ```bash
 npm start -- HEAD~1 --summary
+npm start -- commit
+npm start -- merge
+npm start -- log --log
 npm start -- a1b2c3d --full
+npm start -- HEAD~1 --lines
+npm start -- HEAD~5..HEAD --markdown
+npm start -- --branch main --review
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
 npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-npm start -- --connect-git
-npm start -- --boot
+npm start -- HEAD --split --execute
 ```
 
 ## Running The CLI
@@ -118,7 +121,7 @@ npm start -- --boot
 To use the actual `gitxplain` command directly:
 
 ```bash
-cd /path/to/gitxplain
+cd /home/guru/Dev/gitxplain
 npm link
 ```
 
@@ -128,8 +131,9 @@ Then from any Git repository:
 gitxplain help
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
-gitxplain --connect-git
-gitxplain --boot
+gitxplain HEAD~1 --lines
+gitxplain HEAD~5..HEAD --markdown
+gitxplain --branch main --review
 ```
 
 The `gitxplain help` command also prints quick API-key setup examples for:
@@ -144,9 +148,7 @@ The `gitxplain help` command also prints quick API-key setup examples for:
 If you do not want to link it globally, you can still run it locally:
 
 ```bash
-node /path/to/gitxplain/cli/index.js HEAD~1 --full
-node /path/to/gitxplain/cli/index.js --connect-git
-node /path/to/gitxplain/cli/index.js --boot
+node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 ```
 
 ## Output Modes
@@ -156,9 +158,156 @@ node /path/to/gitxplain/cli/index.js --boot
 - `--fix`: junior-friendly explanation of the fix
 - `--impact`: before-vs-after explanation focused on behavior changes
 - `--full`: full structured analysis
+- `--lines`: file-by-file, line-by-line walkthrough of the changed code
+- `--review`: code review findings with actionable suggestions
+- `--security`: security-focused analysis of the change
+- `--split`: propose how to split a commit into multiple atomic commits
+- `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
+- `--commit`: propose commits for current uncommitted changes
+- `--log`: print recent Git log entries for the current repository
+- `--execute`: apply a proposed split by rewriting history
+- `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
+- `--markdown`: return Markdown output
+- `--html`: return HTML output
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
+
+## Repository Log
+
+Print recent log entries from the current repository:
+
+```bash
+gitxplain log
+gitxplain --log
+```
+
+Both forms print the latest commits in a compact one-line format using the current repository, without calling the LLM.
+
+## Comparison Modes
+
+Single commit:
+
+```bash
+gitxplain HEAD~1 --full
+```
+
+Commit range:
+
+```bash
+gitxplain HEAD~5..HEAD --markdown
+```
+
+Branch or PR-style comparison:
+
+```bash
+gitxplain --branch main --review
+gitxplain --pr origin/main --security
+```
+
+`--branch` and `--pr` compare the current branch to a base ref using the merge base with `HEAD`.
+
+## Commit Splitting
+
+Preview how a commit could be split:
+
+```bash
+gitxplain HEAD~1 --split
+```
+
+Actually split the current `HEAD` commit into smaller commits:
+
+```bash
+gitxplain HEAD --split --execute
+```
+
+Use a specific provider for the analysis:
+
+```bash
+gitxplain HEAD --split --provider gemini
+```
+
+`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
+
+Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
+
+## Release Merge
+
+Preview the release merge plan for the current branch:
+
+```bash
+gitxplain merge
+gitxplain --merge
+```
+
+Actually merge the current branch into the `release` branch:
+
+```bash
+gitxplain --merge --execute
+```
+
+This command scans commits on your current branch after the branch split point and uses version-file diffs as release checkpoints. Each time a commit changes the version, that closes a release window. On the `release` branch, the command creates commits named `release <version>`. If no release versions have been promoted yet, it creates release commits for all detected versions in order. If some release versions already exist on `release`, it skips those and creates only the latest unreleased `release <version>` commit.
+
+## Commit Working Tree
+
+Preview how the current uncommitted changes should be committed:
+
+```bash
+gitxplain commit
+gitxplain --commit
+```
+
+Actually create the suggested commits:
+
+```bash
+gitxplain --commit --execute
+```
+
+Use a specific provider for the analysis:
+
+```bash
+gitxplain --commit --provider gemini
+```
+
+This mode analyzes the current working tree, proposes one or more logical commits with conventional commit messages, and can then create those commits automatically. By default it only previews the plan.
+
+## Config File
+
+Example `.gitxplainrc`:
+
+```json
+{
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "mode": "full",
+  "format": "markdown",
+  "maxDiffLines": 600,
+  "stream": true,
+  "verbose": false
+}
+```
+
+CLI flags still override config values for a single command.
+
+## Clipboard, Streaming, And Hooks
+
+Copy the final output to your clipboard:
+
+```bash
+gitxplain HEAD~1 --markdown --clipboard
+```
+
+Stream long responses as they arrive:
+
+```bash
+gitxplain HEAD~1 --full --stream
+```
+
+Install a post-commit hook that saves a Markdown explanation under `.git/gitxplain/last-explanation.md`:
+
+```bash
+gitxplain install-hook
+```
 
 ## Provider Setup
 
@@ -209,6 +358,7 @@ export CHUTES_MODEL=deepseek-ai/DeepSeek-V3-0324
 
 ```bash
 npm run lint
+npm test
 ```
 
 To make the command globally available during local development:

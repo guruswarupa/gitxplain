@@ -346,7 +346,7 @@ Please acknowledge this selection in a maximum of 3 sentences, giving a brief su
         while (keepProcessing) {
           keepProcessing = false;
 
-          if (response.includes("[ACTION:SELECT_COMMITS]")) {
+          if (response.match(/\[?ACTION:SELECT_COMMITS\]?/i)) {
             if (!this.activeRepo) {
               console.log(`\n${COLORS.yellow}Assistant: Please type 'repos' to select a repository first before comparing commits.\n${COLORS.reset}`);
               response = "User has not selected a repository. Tell them to do so.";

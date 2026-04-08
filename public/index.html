@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="DevInsight - Developer Environment Monitoring and Code Analysis" />
+    <title>DevInsight</title>
+    <script>
+      // Polyfill for Node.js globals in browser context
+      if (typeof global === 'undefined') {
+        window.global = window;
+      }
+      if (typeof process === 'undefined') {
+        window.process = { env: {}, browser: true };
+      }
+      if (typeof Buffer === 'undefined') {
+        window.Buffer = { isBuffer: function() { return false; } };
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

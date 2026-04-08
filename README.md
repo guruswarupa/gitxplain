@@ -74,6 +74,15 @@ gitxplain --tag
 gitxplore tag
 gitxplore --tag
 gitxplain log --log
+gitxplain status
+gitxplain --status
+gitxplain add README.md
+gitxplain remove README.md
+gitxplain del scratch.txt
+gitxplain pop
+gitxplain pop 2
+gitxplain push
+gitxplain push origin main
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
 gitxplain <commit-id> --issues
@@ -174,6 +183,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--tag`: preview or create release tags from the same detected version windows
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print recent Git log entries for the current repository
+- `--status`: print Git working tree status for the current repository
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text
@@ -192,6 +202,21 @@ gitxplain --log
 ```
 
 Both forms print the latest commits in a compact one-line format using the current repository, without calling the LLM.
+
+## Quick Actions
+
+Run a few common Git actions directly through `gitxplain`:
+
+```bash
+gitxplain status
+gitxplain add README.md
+gitxplain remove README.md
+gitxplain del scratch.txt
+gitxplain pop
+gitxplain pop 2
+gitxplain push
+gitxplain push origin main
+```
 
 ## Comparison Modes
 

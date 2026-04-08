@@ -5,6 +5,15 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
+import { startChatSession } from "./services/chatService.js";
+import { loadEnvFile } from "./services/envLoader.js";
+import {
+  saveGitConnection,
+  isGitConnected,
+  loadGitConnection,
+  getGitUserInfo,
+  verifyGitToken
+} from "./services/gitConnectionService.js";
 import { copyToClipboard } from "./services/clipboardService.js";
 import { loadConfig } from "./services/configService.js";
 import {
@@ -13,11 +22,14 @@ import {
   fetchCommitData,
   fetchWorkingTreeData,
   gitAddFiles,
+  gitPush,
+  gitStashPop,
   gitRestoreStaged,
   getRepositoryLog,
   getRepositoryStatus,
   getDefaultBaseRef,
-  isGitRepository
+  isGitRepository,
+  resolveStashRef
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
 import {
@@ -83,7 +95,11 @@ Usage:
   gitxplain add <path> [more-paths...]
   gitxplain remove <path> [more-paths...]
   gitxplain del <path> [more-paths...]
+  gitxplain pop [stash-index]
+  gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
+  gitxplain --connect-git [token]
+  gitxplain --boot [options]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
   gitxplain --branch [base-ref] [options]
@@ -96,7 +112,7 @@ What It Does:
   Merge release-version branch changes into a dedicated release branch
   Tag release-version commit windows on the current branch
   Inspect recent repository history and working tree status without calling the LLM
-  Run quick local actions to stage, unstage, or delete files
+  Run quick local actions to stage, unstage, delete files, pop stashes, or push
 
 Modes:
   --summary    Generate a one-line summary of a change
@@ -120,6 +136,8 @@ Quick Actions:
   add         Stage one or more files with git add
   remove      Unstage one or more files with git restore --staged
   del         Delete one or more files from the working tree
+  pop         Pop a stash entry with a plain numeric index like "pop 2"
+  push        Run git push, optionally with a remote and branch
 
 Output:
   --json       Print structured JSON output
@@ -129,6 +147,8 @@ Output:
   --verbose    Print provider, model, cache, latency, and usage details
   --clipboard  Copy the final output to the system clipboard
   --stream     Stream model output as it is generated when supported
+  --boot       Launch an interactive chat session for dynamic querying, PR creation, and cloning.
+  --connect-git Save your GitHub Personal Access Token to act autonomously inside Chat.
 
 Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
@@ -160,6 +180,10 @@ Examples:
   gitxplain add README.md
   gitxplain remove README.md
   gitxplain del scratch.txt
+  gitxplain pop
+  gitxplain pop 2
+  gitxplain push
+  gitxplain push origin main
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -262,6 +286,8 @@ export function parseArgs(argv) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
+  const isConnectGit = flags.has("--connect-git");
+  const isBoot = flags.has("--boot");
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
@@ -270,11 +296,15 @@ export function parseArgs(argv) {
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
+  const isPopCommand = subcommand === "pop";
+  const isPushCommand = subcommand === "push";
 
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
     installHook: isInstallHook,
+    connectGit: isConnectGit,
+    boot: isBoot,
     logCommand: isLogCommand,
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
@@ -283,10 +313,18 @@ export function parseArgs(argv) {
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
+    popCommand: isPopCommand,
+    pushCommand: isPushCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
+    connectToken: isConnectGit ? positional[0] : null,
+    stashIndex: isPopCommand ? positional[1] ?? null : null,
+    pushRemote: isPushCommand ? positional[1] ?? null : null,
+    pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
+      isConnectGit ||
+      isBoot ||
       isLogCommand ||
       isStatusCommand ||
       isCommitCommand ||
@@ -295,6 +333,8 @@ export function parseArgs(argv) {
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
+      isPopCommand ||
+      isPushCommand ||
       subcommand === "help"
         ? null
         : positional[0] ?? null,
@@ -427,6 +467,8 @@ export async function main(argv = process.argv) {
   const config = loadConfig(cwd);
   const parsed = parseArgs(argv);
 
+  loadEnvFile(cwd); // Ensure environment is loaded first
+
   if (parsed.help) {
     printHelp();
     return 0;
@@ -443,6 +485,50 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
+  if (parsed.connectGit) {
+    let token = parsed.connectToken;
+    if (!token) {
+      if (process.env.GITHUB_TOKEN) {
+        token = process.env.GITHUB_TOKEN;
+      } else {
+        console.error("Please provide your GitHub Personal Access Token.\nRun: gitxplain --connect-git <YOUR_TOKEN>\nOr set it in your .env as GITHUB_TOKEN=...");
+        return 1;
+      }
+    }
+    try {
+      console.log("Verifying token with GitHub API...");
+      const userInfo = await verifyGitToken(token);
+      await saveGitConnection(token, "github", userInfo);
+      console.log(`\nSuccessfully connected to GitHub as: \x1b[36m${userInfo.login}\x1b[0m`);
+      console.log(`Token saved securely to your local configuration.\n`);
+    } catch (e) {
+      console.error(`Token verification failed: ${e.message}`);
+      return 1;
+    }
+    return 0;
+  }
+
+  if (parsed.boot) {
+    if (!isGitConnected()) {
+      console.error("You must connect a GitHub account first to use the interactive agent.\nCommand: gitxplain --connect-git <YOUR_TOKEN>");
+      return 1;
+    }
+    const connection = loadGitConnection();
+    const userInfo = getGitUserInfo();
+    try {
+      const { getProviderConfig, validateProviderConfig } = await import(
+        "./services/aiService.js"
+      );
+      const config = getProviderConfig(parsed.provider, parsed.model);
+      validateProviderConfig(config);
+      await startChatSession(connection.token, userInfo.name || connection.user?.login, parsed.provider, parsed.model);
+    } catch (configError) {
+      console.error(`Missing LLM Key. Please check your .env variables or --provider flags.\n${configError.message}`);
+      return 1;
+    }
+    return 0;
+  }
+
   if (parsed.logCommand || parsed.log) {
     console.log(getRepositoryLog(cwd));
     return 0;
@@ -453,9 +539,11 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand) {
-    if (parsed.actionPaths.length === 0) {
-      throw new Error(`No paths provided for "${parsed.subcommand}".`);
+  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand || parsed.pushCommand) {
+    if (!parsed.popCommand && parsed.actionPaths.length === 0) {
+      if (!parsed.pushCommand) {
+        throw new Error(`No paths provided for "${parsed.subcommand}".`);
+      }
     }
 
     if (parsed.addCommand) {
@@ -470,8 +558,23 @@ export async function main(argv = process.argv) {
       return 0;
     }
 
-    deletePaths(parsed.actionPaths, cwd);
-    console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+    if (parsed.deleteCommand) {
+      deletePaths(parsed.actionPaths, cwd);
+      console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+      return 0;
+    }
+
+    if (parsed.popCommand) {
+      const stashRef = resolveStashRef(parsed.stashIndex);
+      gitStashPop(parsed.stashIndex, cwd);
+      console.log(`Popped ${stashRef}.`);
+      return 0;
+    }
+
+    gitPush(cwd, parsed.pushRemote, parsed.pushBranch);
+    console.log(
+      `Pushed${parsed.pushRemote ? ` to ${parsed.pushRemote}` : ""}${parsed.pushBranch ? ` ${parsed.pushBranch}` : ""}.`
+    );
     return 0;
   }
 
@@ -718,7 +821,10 @@ export async function main(argv = process.argv) {
 const entryFile = fileURLToPath(import.meta.url);
 const executedFile = process.argv[1] ? realpathSync(path.resolve(process.argv[1])) : "";
 
-if (executedFile === entryFile) {
+const isWindows = process.platform === "win32";
+const isMain = executedFile === entryFile || (isWindows && executedFile.toLowerCase() === entryFile.toLowerCase());
+
+if (isMain) {
   main().then(
     (code) => process.exit(code),
     (error) => {

@@ -12,7 +12,7 @@ export function installHook({ cwd, hookName = "post-commit" }) {
   mkdirSync(outputDir, { recursive: true });
 
   const script = `#!/bin/sh
-gitxplain HEAD --summary --markdown --quiet > "${path.join(outputDir, "last-explanation.md")}" 2>/dev/null || true
+gitxplain HEAD --summary --markdown --quiet > "${path.join(outputDir, "last-explanation.md").replaceAll("\\", "/")}" 2>/dev/null || true
 `;
 
   writeFileSync(hookPath, script, "utf8");

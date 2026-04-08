@@ -357,21 +357,25 @@ Please acknowledge this selection in a maximum of 3 sentences, giving a brief su
               
               if (selectedCommits && selectedCommits.length > 0) {
                 console.log(`\n${COLORS.cyan}⏳ Fetching context for ${selectedCommits.length} selected commits...${COLORS.reset}`);
-                let multiContext = `The user selected ${selectedCommits.length} commits for analysis:\n\n`;
                 for (const sc of selectedCommits) {
-                  try {
-                    const details = await fetchCommitDetails(this.token, this.activeRepo.owner, this.activeRepo.name, sc.fullSha);
-                    let filesStr = details.files.map(f => `--- File: ${f.filename} (Status: ${f.status}) ---\nAdditions: ${f.additions} | Deletions: ${f.deletions}\nPatch:\n${f.patch}`).join('\n\n');
-                    if (filesStr.length > 3000) filesStr = filesStr.substring(0, 3000) + "\n\n...[truncated]";
-                    multiContext += `[COMMIT: ${sc.sha} - ${sc.message}]\nChanges/Diffs:\n${filesStr}\n\n`;
-                  } catch (e) {
-                    multiContext += `[COMMIT: ${sc.sha} - ${sc.message}]\nFailed to load diff: ${e.message}\n\n`;
+                    console.log(`\n${COLORS.magenta}Analyzing commit ${sc.sha}... ${COLORS.reset}`);
+                    try {
+                      const details = await fetchCommitDetails(this.token, this.activeRepo.owner, this.activeRepo.name, sc.fullSha);
+                      let filesStr = details.files.map(f => `--- File: ${f.filename} (Status: ${f.status}) ---\nAdditions: ${f.additions} | Deletions: ${f.deletions}\nPatch:\n${f.patch}`).join('\n\n');
+                      if (filesStr.length > 50000) filesStr = filesStr.substring(0, 50000) + "\n\n...[truncated]";
+                      
+                      const singleContext = `Please analyze this individual commit: [COMMIT: ${sc.sha} - ${sc.message}]\nChanges/Diffs:\n${filesStr}\n\nPlease output your analysis for this specific commit only.`;
+                      const answer = await this.sendMessage(singleContext);
+                      
+                      console.log(`\n${COLORS.green}Analysis for ${sc.sha}:${COLORS.reset}\n${answer}`);
+                    } catch (e) {
+                      console.log(`\n${COLORS.red}Failed to load diff for ${sc.sha}: ${e.message}${COLORS.reset}`);
+                    }
                   }
-                }
-                multiContext += "Please proceed with analyzing or comparing these commits as requested.";
-                response = await this.sendMessage(multiContext);
-                keepProcessing = true;
-                continue;
+                  
+                  response = "I have fetched and analyzed each commit individually as requested. Let me know if you need specific details out of them.";
+                  keepProcessing = false;
+                  continue;
               } else {
                 response = "User cancelled commit selection or no commits were selected.";
                 keepProcessing = true;

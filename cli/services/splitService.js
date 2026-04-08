@@ -6,6 +6,7 @@ import {
   gitResetSoft,
   gitUnstageAll,
   isWorkingTreeClean,
+  runGitCommandUnchecked,
   resolveCommitSha
 } from "./gitService.js";
 
@@ -134,12 +135,30 @@ function buildRecoveryMessage(originalSha) {
   ].join("\n");
 }
 
+function getDirtyWorkingTreeSummary(cwd) {
+  const result = runGitCommandUnchecked(["status", "--short"], cwd);
+  if (result.exitCode !== 0 || result.stdout === "") {
+    return null;
+  }
+
+  return result.stdout
+    .split("\n")
+    .filter(Boolean)
+    .slice(0, 10)
+    .join("\n");
+}
+
 export function executeSplit(plan, commitId, cwd) {
   const originalSha = resolveCommitSha(commitId, cwd);
 
   try {
     if (!isWorkingTreeClean(cwd)) {
-      throw new Error("Working tree must be clean before executing a split.");
+      const dirtySummary = getDirtyWorkingTreeSummary(cwd);
+      throw new Error(
+        dirtySummary
+          ? `Working tree must be clean before executing a split.\nUncommitted changes:\n${dirtySummary}`
+          : "Working tree must be clean before executing a split."
+      );
     }
 
     const headSha = getCurrentHeadSha(cwd);

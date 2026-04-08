@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchCommitData } from "../cli/services/gitService.js";
+import { fetchCommitData, getRepositoryLog } from "../cli/services/gitService.js";
 
 test("fetchCommitData reads a single commit", () => {
   const responses = new Map([
@@ -32,4 +32,17 @@ test("fetchCommitData reads a commit range", () => {
   assert.equal(data.commitCount, 2);
   assert.deepEqual(data.filesChanged, ["a.js", "b.js"]);
   assert.match(data.commitMessage, /First change/);
+});
+
+test("getRepositoryLog fetches recent repository history", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "abc1234 2026-04-08 Guru Initial commit";
+  };
+
+  const log = getRepositoryLog("/tmp", 20, runner);
+
+  assert.equal(log, "abc1234 2026-04-08 Guru Initial commit");
+  assert.deepEqual(calls, ["log --max-count=20 --date=short --pretty=format:%h %ad %an %s"]);
 });

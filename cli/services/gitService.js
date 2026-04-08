@@ -353,6 +353,14 @@ export function listBranchCommits(ref, cwd) {
     .filter(Boolean);
 }
 
+export function listFilesInRef(ref, cwd) {
+  const output = runGitCommand(["ls-tree", "-r", "--name-only", ref], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   const result = runGitCommandUnchecked(["merge-base", "--is-ancestor", ancestorRef, descendantRef], cwd);
 

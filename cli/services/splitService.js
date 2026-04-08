@@ -178,9 +178,39 @@ function sortPlanCommits(plan) {
   return [...plan.commits].sort((left, right) => left.order - right.order);
 }
 
+export function validateSplitExecutionTarget(
+  commitId,
+  cwd,
+  helpers = {
+    resolveCommitSha,
+    getCurrentHeadSha,
+    getCommitParents
+  }
+) {
+  const targetSha = helpers.resolveCommitSha(commitId, cwd);
+  const currentHeadSha = helpers.getCurrentHeadSha(cwd);
+
+  if (targetSha !== currentHeadSha) {
+    throw new Error(
+      "Automatic split execution currently supports only the current HEAD commit. Use --split to preview older commits, then rebase or cherry-pick manually."
+    );
+  }
+
+  const parents = helpers.getCommitParents(targetSha, cwd);
+  if (parents.length !== 1) {
+    throw new Error("Automatic split execution only supports non-merge commits.");
+  }
+
+  return {
+    targetSha,
+    currentHeadSha,
+    parentSha: parents[0]
+  };
+}
+
 export function executeSplit(plan, commitId, cwd) {
-  const targetSha = resolveCommitSha(commitId, cwd);
-  const originalHeadSha = getCurrentHeadSha(cwd);
+  const { targetSha, currentHeadSha, parentSha } = validateSplitExecutionTarget(commitId, cwd);
+  const originalHeadSha = currentHeadSha;
   const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
 
@@ -198,12 +228,6 @@ export function executeSplit(plan, commitId, cwd) {
       throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
     }
 
-    const parents = getCommitParents(targetSha, cwd);
-    if (parents.length !== 1) {
-      throw new Error("Only non-merge commits can be split automatically.");
-    }
-
-    const [parentSha] = parents;
     const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
 
     for (const replayCommit of commitsToReplay) {

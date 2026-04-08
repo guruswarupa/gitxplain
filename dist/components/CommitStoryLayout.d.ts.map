@@ -1,1 +1,0 @@
-{"version":3,"file":"CommitStoryLayout.d.ts","sourceRoot":"","sources":["../../src/components/CommitStoryLayout.tsx"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,OAAO,KAAK,MAAM,OAAO,CAAC;AAK1B,UAAU,sBAAsB;IAC9B,QAAQ,CAAC,EAAE,KAAK,CAAC,SAAS,CAAC;CAC5B;AAED,MAAM,CAAC,OAAO,UAAU,iBAAiB,CAAC,EAAE,QAAQ,EAAE,EAAE,sBAAsB,2CAwE7E"}

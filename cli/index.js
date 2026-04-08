@@ -22,6 +22,7 @@ import {
   formatOutput,
   formatPreamble
 } from "./services/outputFormatter.js";
+import { executeSplit, formatSplitPlan, parseSplitPlan } from "./services/splitService.js";
 
 const MODE_FLAGS = new Map([
   ["--summary", "summary"],
@@ -31,7 +32,8 @@ const MODE_FLAGS = new Map([
   ["--full", "full"],
   ["--lines", "lines"],
   ["--review", "review"],
-  ["--security", "security"]
+  ["--security", "security"],
+  ["--split", "split"]
 ]);
 
 const FORMAT_FLAGS = new Map([
@@ -61,6 +63,9 @@ Modes:
   --lines      Explain the changed code line by line
   --review     Generate a code review with risks and suggestions
   --security   Focus on security risks introduced by the change
+  --split      Propose splitting a commit into multiple atomic commits
+  --execute    Execute the proposed split (rewrites git history)
+  --dry-run    Show the split plan without executing (default for --split)
 
 Output:
   --json       Print JSON output
@@ -87,6 +92,8 @@ Examples:
   gitxplain HEAD~5..HEAD --markdown
   gitxplain --branch main --review
   gitxplain --pr origin/main --security --stream
+  gitxplain HEAD~1 --split
+  gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 
 Provider Setup:
@@ -205,7 +212,9 @@ export function parseArgs(argv) {
     clipboard: flags.has("--clipboard"),
     stream: flags.has("--stream"),
     verbose: flags.has("--verbose"),
-    quiet: flags.has("--quiet")
+    quiet: flags.has("--quiet"),
+    execute: flags.has("--execute"),
+    dryRun: flags.has("--dry-run")
   };
 }
 
@@ -233,6 +242,7 @@ async function chooseModeInteractively() {
       "6. Line-by-Line Code Walkthrough",
       "7. Code Review",
       "8. Security Review",
+      "9. Split Commit",
       "> "
     ].join("\n")
   );
@@ -245,7 +255,8 @@ async function chooseModeInteractively() {
     "5": "full",
     "6": "lines",
     "7": "review",
-    "8": "security"
+    "8": "security",
+    "9": "split"
   };
 
   return selections[answer] ?? "full";
@@ -332,6 +343,54 @@ export async function main(argv = process.argv) {
 
   const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
   const commitData = fetchCommitData(targetRef, cwd);
+
+  if (mode === "split") {
+    if (commitData.analysisType !== "commit") {
+      throw new Error("--split only supports analyzing a single commit.");
+    }
+
+    const { explanation, responseMeta, promptMeta } = await generateExplanation({
+      mode: "split",
+      commitData,
+      providerOverride: runtimeOptions.provider,
+      modelOverride: runtimeOptions.model,
+      maxDiffLines: runtimeOptions.maxDiffLines,
+      stream: false,
+      onChunk: null,
+      onStart: null
+    });
+
+    const plan = parseSplitPlan(explanation);
+
+    if (!plan.reason_to_split || plan.commits.length === 0) {
+      console.log("This commit is already atomic. No split recommended.");
+      return 0;
+    }
+
+    console.log(formatSplitPlan(plan));
+
+    if (parsed.execute && !parsed.dryRun) {
+      const confirmed = await askQuestion(
+        "\nThis will rewrite git history. Continue? (yes/no) > "
+      );
+      if (confirmed.toLowerCase() !== "yes") {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      executeSplit(plan, commitData.commitId, cwd);
+      console.log(`\nSplit complete. Created ${plan.commits.length} commits.`);
+    } else {
+      console.log("\nThis is a preview. Run with --execute to apply the split.");
+    }
+
+    if (runtimeOptions.verbose) {
+      process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+    }
+
+    return 0;
+  }
+
   const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
   let streamStarted = false;
 

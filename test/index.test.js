@@ -40,3 +40,12 @@ test("parseArgs handles help and install-hook commands", () => {
   assert.equal(hookParsed.installHook, true);
   assert.equal(hookParsed.hookName, "post-commit");
 });
+
+test("parseArgs handles split execution flags", () => {
+  const parsed = parseArgs(["node", "gitxplain", "HEAD", "--split", "--execute", "--dry-run"]);
+
+  assert.equal(parsed.commitRef, "HEAD");
+  assert.equal(parsed.mode, "split");
+  assert.equal(parsed.execute, true);
+  assert.equal(parsed.dryRun, true);
+});

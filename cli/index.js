@@ -13,6 +13,7 @@ import {
   fetchCommitData,
   fetchWorkingTreeData,
   gitAddFiles,
+  gitPush,
   gitStashPop,
   gitRestoreStaged,
   getRepositoryLog,
@@ -86,6 +87,7 @@ Usage:
   gitxplain remove <path> [more-paths...]
   gitxplain del <path> [more-paths...]
   gitxplain pop [stash-index]
+  gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
@@ -99,7 +101,7 @@ What It Does:
   Merge release-version branch changes into a dedicated release branch
   Tag release-version commit windows on the current branch
   Inspect recent repository history and working tree status without calling the LLM
-  Run quick local actions to stage, unstage, or delete files
+  Run quick local actions to stage, unstage, delete files, pop stashes, or push
 
 Modes:
   --summary    Generate a one-line summary of a change
@@ -124,6 +126,7 @@ Quick Actions:
   remove      Unstage one or more files with git restore --staged
   del         Delete one or more files from the working tree
   pop         Pop a stash entry with a plain numeric index like "pop 2"
+  push        Run git push, optionally with a remote and branch
 
 Output:
   --json       Print structured JSON output
@@ -166,6 +169,8 @@ Examples:
   gitxplain del scratch.txt
   gitxplain pop
   gitxplain pop 2
+  gitxplain push
+  gitxplain push origin main
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -277,6 +282,7 @@ export function parseArgs(argv) {
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
   const isPopCommand = subcommand === "pop";
+  const isPushCommand = subcommand === "push";
 
   return {
     subcommand,
@@ -291,9 +297,12 @@ export function parseArgs(argv) {
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
     popCommand: isPopCommand,
+    pushCommand: isPushCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
     stashIndex: isPopCommand ? positional[1] ?? null : null,
+    pushRemote: isPushCommand ? positional[1] ?? null : null,
+    pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
       isLogCommand ||
@@ -305,6 +314,7 @@ export function parseArgs(argv) {
       isRemoveCommand ||
       isDeleteCommand ||
       isPopCommand ||
+      isPushCommand ||
       subcommand === "help"
         ? null
         : positional[0] ?? null,
@@ -463,9 +473,11 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand) {
+  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand || parsed.pushCommand) {
     if (!parsed.popCommand && parsed.actionPaths.length === 0) {
-      throw new Error(`No paths provided for "${parsed.subcommand}".`);
+      if (!parsed.pushCommand) {
+        throw new Error(`No paths provided for "${parsed.subcommand}".`);
+      }
     }
 
     if (parsed.addCommand) {
@@ -486,9 +498,17 @@ export async function main(argv = process.argv) {
       return 0;
     }
 
-    const stashRef = resolveStashRef(parsed.stashIndex);
-    gitStashPop(parsed.stashIndex, cwd);
-    console.log(`Popped ${stashRef}.`);
+    if (parsed.popCommand) {
+      const stashRef = resolveStashRef(parsed.stashIndex);
+      gitStashPop(parsed.stashIndex, cwd);
+      console.log(`Popped ${stashRef}.`);
+      return 0;
+    }
+
+    gitPush(cwd, parsed.pushRemote, parsed.pushBranch);
+    console.log(
+      `Pushed${parsed.pushRemote ? ` to ${parsed.pushRemote}` : ""}${parsed.pushBranch ? ` ${parsed.pushBranch}` : ""}.`
+    );
     return 0;
   }
 

@@ -198,6 +198,20 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function gitPush(cwd, remote = null, branch = null, runner = runGitCommand) {
+  const args = ["push"];
+
+  if (remote) {
+    args.push(remote);
+  }
+
+  if (branch) {
+    args.push(branch);
+  }
+
+  return runner(args, cwd);
+}
+
 export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
   return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
 }

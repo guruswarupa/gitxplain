@@ -4,9 +4,15 @@ import isDev from 'electron-is-dev';
 import simpleGit from 'simple-git';
 import Store from 'electron-store';
 import { spawn } from 'child_process';
+import fs from 'fs';
 
-// Path to gitxplain CLI
-const GITXPLAIN_CLI = path.join(__dirname, '../../gitxplain-main/gitxplain-main/cli/index.js');
+// Resolve gitxplain CLI path for both dev and packaged layouts.
+const CLI_CANDIDATES = [
+  path.join(__dirname, '../cli/index.js'),
+  path.join(process.cwd(), 'cli/index.js'),
+  path.join(__dirname, '../../cli/index.js'),
+];
+const GITXPLAIN_CLI = CLI_CANDIDATES.find((candidate) => fs.existsSync(candidate)) || CLI_CANDIDATES[0];
 
 let mainWindow: BrowserWindow | null = null;
 

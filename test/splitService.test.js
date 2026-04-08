@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatSplitPlan, parseSplitPlan, validateSplitExecutionTarget } from "../cli/services/splitService.js";
+import {
+  formatSplitPlan,
+  parseSplitPlan,
+  reconcileSplitPlan,
+  validateSplitExecutionTarget
+} from "../cli/services/splitService.js";
 
 test("parseSplitPlan parses valid JSON", () => {
   const plan = parseSplitPlan(`{
@@ -71,6 +76,30 @@ test("parseSplitPlan deduplicates files across split groups", () => {
   assert.deepEqual(plan.commits[0].files, ["src/validation.js", "test/validation.test.js"]);
   assert.equal(plan.commits.length, 1);
   assert.match(plan.warnings[0], /Duplicate file assignments were removed/);
+});
+
+test("reconcileSplitPlan removes extra files and adds missing commit files", () => {
+  const plan = reconcileSplitPlan(
+    {
+      original_summary: "Initial commit",
+      reason_to_split: "Separate docs and code.",
+      warnings: [],
+      commits: [
+        {
+          order: 1,
+          message: "feat: add code",
+          files: ["src/app.js", ".npmignore"],
+          description: "Adds code."
+        }
+      ]
+    },
+    ["src/app.js", "README.md"]
+  );
+
+  assert.deepEqual(plan.commits[0].files, ["src/app.js"]);
+  assert.deepEqual(plan.commits[1].files, ["README.md"]);
+  assert.match(plan.warnings[0], /Files not present in the target commit were removed/);
+  assert.match(plan.warnings[1], /Missing files were added to a final fallback split group/);
 });
 
 test("formatSplitPlan renders the expected sections", () => {

@@ -67,3 +67,55 @@ test("parseArgs handles repository log flag", () => {
   assert.equal(parsed.commitRef, null);
   assert.equal(parsed.mode, "log");
 });
+
+test("parseArgs handles repository status subcommand", () => {
+  const parsed = parseArgs(["node", "gitxplain", "status"]);
+
+  assert.equal(parsed.statusCommand, true);
+  assert.equal(parsed.status, false);
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.mode, null);
+});
+
+test("parseArgs handles repository status flag", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--status"]);
+
+  assert.equal(parsed.statusCommand, false);
+  assert.equal(parsed.status, true);
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.mode, "status");
+});
+
+test("parseArgs handles add command with multiple paths", () => {
+  const parsed = parseArgs(["node", "gitxplain", "add", "README.md", "cli/index.js"]);
+
+  assert.equal(parsed.addCommand, true);
+  assert.deepEqual(parsed.actionPaths, ["README.md", "cli/index.js"]);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles remove command", () => {
+  const parsed = parseArgs(["node", "gitxplain", "remove", "README.md"]);
+
+  assert.equal(parsed.removeCommand, true);
+  assert.deepEqual(parsed.actionPaths, ["README.md"]);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles del command", () => {
+  const parsed = parseArgs(["node", "gitxplain", "del", "scratch.txt"]);
+
+  assert.equal(parsed.deleteCommand, true);
+  assert.deepEqual(parsed.actionPaths, ["scratch.txt"]);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles commit subcommand and flag", () => {
+  const commandParsed = parseArgs(["node", "gitxplain", "commit"]);
+  assert.equal(commandParsed.commitCommand, true);
+  assert.equal(commandParsed.commitRef, null);
+
+  const flagParsed = parseArgs(["node", "gitxplain", "--commit", "--execute"]);
+  assert.equal(flagParsed.mode, "commit");
+  assert.equal(flagParsed.execute, true);
+});

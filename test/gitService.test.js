@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchCommitData, getRepositoryLog } from "../cli/services/gitService.js";
+import { fetchCommitData, getRepositoryLog, getRepositoryStatus, resolveTreeSha } from "../cli/services/gitService.js";
 
 test("fetchCommitData reads a single commit", () => {
   const responses = new Map([
@@ -45,4 +45,56 @@ test("getRepositoryLog fetches recent repository history", () => {
 
   assert.equal(log, "abc1234 2026-04-08 Guru Initial commit");
   assert.deepEqual(calls, ["log --max-count=20 --date=short --pretty=format:%h %ad %an %s"]);
+});
+
+test("getRepositoryStatus formats porcelain status output for humans", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return [
+      "## main...origin/main",
+      "M  README.md",
+      "A  prompts/commit.txt",
+      "MM cli/index.js",
+      "AM cli/services/commitService.js",
+      "?? scratch.txt"
+    ].join("\n");
+  };
+
+  const status = getRepositoryStatus("/tmp", runner);
+
+  assert.equal(
+    status,
+    [
+      "main...origin/main",
+      "Changes:",
+      "- README.md: staged modification",
+      "- prompts/commit.txt: staged new file",
+      "- cli/index.js: staged modification, unstaged modification",
+      "- cli/services/commitService.js: staged new file, unstaged modification",
+      "- scratch.txt: untracked"
+    ].join("\n")
+  );
+  assert.deepEqual(calls, ["status --short --branch"]);
+});
+
+test("getRepositoryStatus reports a clean working tree clearly", () => {
+  const runner = () => "## main";
+
+  const status = getRepositoryStatus("/tmp", runner);
+
+  assert.equal(status, "main\n\nWorking tree is clean.");
+});
+
+test("resolveTreeSha resolves the tree object for a ref", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "tree123";
+  };
+
+  const treeSha = resolveTreeSha("HEAD", "/tmp", runner);
+
+  assert.equal(treeSha, "tree123");
+  assert.deepEqual(calls, ["rev-parse HEAD^{tree}"]);
 });

@@ -135,8 +135,16 @@ export function getCurrentHeadSha(cwd) {
   return runGitCommand(["rev-parse", "HEAD"], cwd);
 }
 
+export function getCurrentBranchName(cwd) {
+  return runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+}
+
 export function resolveTreeSha(ref, cwd, runner = runGitCommand) {
   return runner(["rev-parse", `${ref}^{tree}`], cwd);
+}
+
+export function getMergeBase(leftRef, rightRef, cwd) {
+  return runGitCommand(["merge-base", leftRef, rightRef], cwd);
 }
 
 export function pathExistsInRef(ref, filePath, cwd) {
@@ -333,9 +341,36 @@ export function gitCherryPick(ref, cwd) {
   return runGitCommand(["cherry-pick", ref], cwd);
 }
 
+export function gitMerge(ref, cwd, message = null) {
+  const args = message == null ? ["merge", "--no-ff", ref] : ["merge", "--no-ff", ref, "-m", message];
+  return runGitCommand(args, cwd);
+}
+
 export function gitCherryPickAbort(cwd) {
   const result = runGitCommandUnchecked(["cherry-pick", "--abort"], cwd);
   return result.exitCode === 0;
+}
+
+export function gitMergeAbort(cwd) {
+  const result = runGitCommandUnchecked(["merge", "--abort"], cwd);
+  return result.exitCode === 0;
+}
+
+export function localBranchExists(branchName, cwd) {
+  const result = runGitCommandUnchecked(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], cwd);
+  return result.exitCode === 0;
+}
+
+export function gitCheckout(ref, cwd) {
+  return runGitCommand(["checkout", ref], cwd);
+}
+
+export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
+  return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
+}
+
+export function gitDeleteBranch(branchName, cwd) {
+  return runGitCommand(["branch", "-D", branchName], cwd);
 }
 
 export function writeCurrentIndexTree(cwd) {

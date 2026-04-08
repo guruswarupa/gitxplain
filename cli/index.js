@@ -20,6 +20,7 @@ import {
   isGitRepository
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
+import { buildReleaseMergePlan, executeReleaseMerge, finalizeReleaseMergePlan, formatReleaseMergePlan } from "./services/mergeService.js";
 import {
   formatFooter,
   formatHtmlOutput,
@@ -41,6 +42,7 @@ const MODE_FLAGS = new Map([
   ["--review", "review"],
   ["--security", "security"],
   ["--split", "split"],
+  ["--merge", "merge"],
   ["--commit", "commit"],
   ["--log", "log"],
   ["--status", "status"]
@@ -60,6 +62,8 @@ Usage:
   gitxplain --help
   gitxplain commit
   gitxplain --commit
+  gitxplain merge
+  gitxplain --merge
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -77,6 +81,7 @@ What It Does:
   Analyze commits, ranges, branches, and working tree changes
   Generate summaries, reviews, security checks, and line-by-line walkthroughs
   Plan commits for uncommitted work and split oversized commits into atomic steps
+  Merge release-version branch changes into a dedicated release branch
   Inspect recent repository history and working tree status without calling the LLM
   Run quick local actions to stage, unstage, or delete files
 
@@ -90,6 +95,7 @@ Modes:
   --review     Generate review findings, risks, and suggestions
   --security   Focus on security-relevant changes and concerns
   --split      Propose splitting a commit into smaller atomic commits
+  --merge      Preview or apply a merge into the release branch based on version bumps
   --commit     Propose commits for current uncommitted changes
   --log        Print recent Git log entries for the current repository
   --status     Print Git working tree status for the current repository
@@ -129,6 +135,8 @@ Examples:
   gitxplain --pr origin/main --security --stream
   gitxplain commit
   gitxplain --commit --execute
+  gitxplain merge
+  gitxplain --merge --execute
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -241,6 +249,7 @@ export function parseArgs(argv) {
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
+  const isMergeCommand = subcommand === "merge";
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
@@ -252,6 +261,7 @@ export function parseArgs(argv) {
     logCommand: isLogCommand,
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
+    mergeCommand: isMergeCommand,
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
@@ -262,6 +272,7 @@ export function parseArgs(argv) {
       isLogCommand ||
       isStatusCommand ||
       isCommitCommand ||
+      isMergeCommand ||
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
@@ -284,7 +295,8 @@ export function parseArgs(argv) {
     execute: flags.has("--execute"),
     dryRun: flags.has("--dry-run"),
     log: flags.has("--log"),
-    status: flags.has("--status")
+    status: flags.has("--status"),
+    merge: flags.has("--merge")
   };
 }
 
@@ -313,8 +325,9 @@ async function chooseModeInteractively() {
       "7. Code Review",
       "8. Security Review",
       "9. Split Commit",
-      "10. Repository Log",
-      "11. Commit Working Tree",
+      "10. Merge To Release Branch",
+      "11. Repository Log",
+      "12. Commit Working Tree",
       "> "
     ].join("\n")
   );
@@ -329,8 +342,9 @@ async function chooseModeInteractively() {
     "7": "review",
     "8": "security",
     "9": "split",
-    "10": "log",
-    "11": "commit"
+    "10": "merge",
+    "11": "log",
+    "12": "commit"
   };
 
   return selections[answer] ?? "full";
@@ -487,6 +501,38 @@ export async function main(argv = process.argv) {
 
     if (runtimeOptions.verbose) {
       process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+    }
+
+    return 0;
+  }
+
+  if (mode === "merge" || parsed.mergeCommand || parsed.merge) {
+    if (parsed.commitRef) {
+      throw new Error("--merge works from the current branch and does not accept a commit ref.");
+    }
+
+    const plan = finalizeReleaseMergePlan(buildReleaseMergePlan(cwd));
+
+    if (plan.commits.length === 0) {
+      console.log("No release-version commits detected. Nothing to merge.");
+      return 0;
+    }
+
+    console.log(formatReleaseMergePlan(plan));
+
+    if (parsed.execute && !parsed.dryRun) {
+      const confirmed = await askQuestion(
+        `\nThis will merge ${plan.sourceBranch} into ${plan.releaseBranch}. Continue? (yes/no) > `
+      );
+      if (confirmed.toLowerCase() !== "yes") {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      executeReleaseMerge(plan, cwd);
+      console.log(`\nMerge complete. ${plan.releaseBranch} now includes ${plan.sourceBranch}.`);
+    } else {
+      console.log(`\nThis is a preview. Run with --execute to apply the merge on ${plan.releaseBranch}.`);
     }
 
     return 0;

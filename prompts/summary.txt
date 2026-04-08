@@ -1,0 +1,10 @@
+Summarize this commit in one sentence.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Diff:
+{{diff}}

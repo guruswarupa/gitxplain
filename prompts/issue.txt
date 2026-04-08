@@ -1,0 +1,18 @@
+Determine if this commit fixes a bug.
+
+If yes:
+- Describe the issue
+- Explain how it was fixed
+- Mention affected components
+
+If no:
+- Explain the main purpose of the commit instead
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Diff:
+{{diff}}

@@ -1,0 +1,15 @@
+Compare the code before and after this commit.
+
+Explain:
+- Key differences
+- Improvements made
+- Behavioral changes
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Diff:
+{{diff}}

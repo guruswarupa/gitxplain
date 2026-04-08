@@ -31,6 +31,8 @@ const ANSI = {
 const RELEASE_BRANCH = "release";
 const VERSION_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g;
 const RELEASE_SUBJECT_PATTERN = /^release\s+(.+)$/i;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const INTEGER_PATTERN = /^\d+$/;
 
 function supportsColor() {
   return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
@@ -56,22 +58,135 @@ function stripDiffPrefix(line) {
   return line.slice(1).trim();
 }
 
+function parseDiffPath(line) {
+  const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  return match ? match[2] : null;
+}
+
+function isExactFilename(filePath, filename) {
+  return filePath === filename || filePath.endsWith(`/${filename}`);
+}
+
+function extractVersionCandidate(filePath, line) {
+  const trimmed = line.trim();
+
+  if (filePath == null || trimmed === "") {
+    return null;
+  }
+
+  if (isExactFilename(filePath, "package.json")) {
+    return trimmed.match(/^"version"\s*:\s*"([^"]+)"[,]?$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "pubspec.yaml")) {
+    return trimmed.match(/^version:\s*([^\s#]+)$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "Cargo.toml")) {
+    return trimmed.match(/^version\s*=\s*"([^"]+)"$/)?.[1] ?? null;
+  }
+
+  if (isExactFilename(filePath, "pom.xml")) {
+    return trimmed.match(/^<version>([^<]+)<\/version>$/)?.[1] ?? null;
+  }
+
+  if (filePath.endsWith(".csproj")) {
+    return (
+      trimmed.match(/^<Version>([^<]+)<\/Version>$/)?.[1] ??
+      trimmed.match(/^<ApplicationDisplayVersion>([^<]+)<\/ApplicationDisplayVersion>$/)?.[1] ??
+      trimmed.match(/^<ApplicationVersion>([^<]+)<\/ApplicationVersion>$/)?.[1] ??
+      null
+    );
+  }
+
+  if (isExactFilename(filePath, "Info.plist")) {
+    return (
+      trimmed.match(/^<string>([^<]+)<\/string>$/)?.[1] ??
+      null
+    );
+  }
+
+  if (filePath.endsWith("AndroidManifest.xml")) {
+    return (
+      trimmed.match(/versionName="([^"]+)"/)?.[1] ??
+      trimmed.match(/versionCode="([^"]+)"/)?.[1] ??
+      null
+    );
+  }
+
+  if (filePath.endsWith("build.gradle") || filePath.endsWith("build.gradle.kts")) {
+    return (
+      trimmed.match(/^versionName\s*[= ]\s*["']?([^"'\s]+)["']?$/)?.[1] ??
+      trimmed.match(/^versionCode\s*[= ]\s*["']?([^"'\s]+)["']?$/)?.[1] ??
+      trimmed.match(/^version\s*=\s*["']([^"']+)["']$/)?.[1] ??
+      null
+    );
+  }
+
+  if (isExactFilename(filePath, "gradle.properties")) {
+    return (
+      trimmed.match(/^(?:VERSION_NAME|versionName)\s*=\s*(\S+)$/)?.[1] ??
+      trimmed.match(/^(?:VERSION_CODE|versionCode)\s*=\s*(\S+)$/)?.[1] ??
+      null
+    );
+  }
+
+  if (
+    isExactFilename(filePath, "VERSION") ||
+    isExactFilename(filePath, ".version") ||
+    isExactFilename(filePath, "version.txt")
+  ) {
+    return (SEMVER_PATTERN.test(trimmed) || INTEGER_PATTERN.test(trimmed)) ? trimmed : null;
+  }
+
+  return null;
+}
+
+function rankVersionValue(value) {
+  if (SEMVER_PATTERN.test(value)) {
+    return 2;
+  }
+
+  if (INTEGER_PATTERN.test(value)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function selectReleaseVersion(values) {
+  return [...values].sort((left, right) => rankVersionValue(right) - rankVersionValue(left))[0] ?? null;
+}
+
 export function detectVersionChanges(diff) {
   const removedVersions = [];
   const addedVersions = [];
+  let currentFile = null;
 
   for (const line of diff.split("\n")) {
+    const diffPath = parseDiffPath(line);
+    if (diffPath) {
+      currentFile = diffPath;
+      continue;
+    }
+
     if (line.startsWith("---") || line.startsWith("+++")) {
       continue;
     }
 
     if (line.startsWith("-")) {
-      removedVersions.push(...extractVersions(stripDiffPrefix(line)));
+      const candidate = extractVersionCandidate(currentFile, stripDiffPrefix(line));
+      if (candidate) {
+        removedVersions.push(candidate);
+      }
       continue;
     }
 
     if (line.startsWith("+")) {
-      addedVersions.push(...extractVersions(stripDiffPrefix(line)));
+      const candidate = extractVersionCandidate(currentFile, stripDiffPrefix(line));
+      if (candidate) {
+        addedVersions.push(candidate);
+      }
     }
   }
 
@@ -83,12 +198,13 @@ export function detectVersionChanges(diff) {
   return {
     from,
     to,
-    hasVersionChange: from.length > 0 && to.length > 0
+    hasVersionChange: from.length > 0 && to.length > 0,
+    releaseVersion: selectReleaseVersion(to)
   };
 }
 
 function getReleaseVersion(change) {
-  return change.to.at(-1) ?? null;
+  return change.releaseVersion ?? null;
 }
 
 function getCommitSubject(ref, cwd) {

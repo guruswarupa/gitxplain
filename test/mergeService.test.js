@@ -39,6 +39,40 @@ diff --git a/README.md b/README.md
   assert.deepEqual(change.to, []);
 });
 
+test("detectVersionChanges reads Android Gradle app versions", () => {
+  const change = detectVersionChanges(`
+diff --git a/android/app/build.gradle b/android/app/build.gradle
+--- a/android/app/build.gradle
++++ b/android/app/build.gradle
+@@
+-        versionCode 14
+-        versionName "1.4.0"
++        versionCode 15
++        versionName "1.5.0"
+`);
+
+  assert.equal(change.hasVersionChange, true);
+  assert.deepEqual(change.from, ["14", "1.4.0"]);
+  assert.deepEqual(change.to, ["15", "1.5.0"]);
+  assert.equal(change.releaseVersion, "1.5.0");
+});
+
+test("detectVersionChanges ignores Gradle wrapper distribution versions", () => {
+  const change = detectVersionChanges(`
+diff --git a/android/gradle/wrapper/gradle-wrapper.properties b/android/gradle/wrapper/gradle-wrapper.properties
+--- a/android/gradle/wrapper/gradle-wrapper.properties
++++ b/android/gradle/wrapper/gradle-wrapper.properties
+@@
+-distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip
++distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.3-bin.zip
+`);
+
+  assert.equal(change.hasVersionChange, false);
+  assert.deepEqual(change.from, []);
+  assert.deepEqual(change.to, []);
+  assert.equal(change.releaseVersion, null);
+});
+
 test("buildReleaseWindows groups commits by release version and merges repeated bumps", () => {
   const sourceCommits = [
     {

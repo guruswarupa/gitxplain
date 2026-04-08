@@ -137,6 +137,53 @@ export function getRepositoryLog(cwd, limit = 20, runner = runGitCommand) {
   );
 }
 
+export function getCommitParents(ref, cwd) {
+  const output = runGitCommand(["show", "-s", "--format=%P", ref], cwd);
+  return output
+    .split(" ")
+    .map((parent) => parent.trim())
+    .filter(Boolean);
+}
+
+export function listCommitsAfter(baseRef, headRef, cwd) {
+  const output = runGitCommand(["rev-list", "--reverse", `${baseRef}..${headRef}`], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
+  const result = runGitCommandUnchecked(["merge-base", "--is-ancestor", ancestorRef, descendantRef], cwd);
+
+  if (result.exitCode === 0) {
+    return true;
+  }
+
+  if (result.exitCode === 1) {
+    return false;
+  }
+
+  throw new Error(result.stderr || "Unable to determine commit ancestry.");
+}
+
+export function gitResetHard(ref, cwd) {
+  return runGitCommand(["reset", "--hard", ref], cwd);
+}
+
+export function gitCherryPickNoCommit(ref, cwd) {
+  return runGitCommand(["cherry-pick", "--no-commit", ref], cwd);
+}
+
+export function gitCherryPick(ref, cwd) {
+  return runGitCommand(["cherry-pick", ref], cwd);
+}
+
+export function gitCherryPickAbort(cwd) {
+  const result = runGitCommandUnchecked(["cherry-pick", "--abort"], cwd);
+  return result.exitCode === 0;
+}
+
 function fetchSingleCommitData(commitId, cwd, runner) {
   const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
   const diff = runner(["diff", `${commitId}^!`], cwd);

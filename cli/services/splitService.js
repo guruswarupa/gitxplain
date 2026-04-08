@@ -1,11 +1,17 @@
 import process from "node:process";
 import {
+  getCommitParents,
   getCurrentHeadSha,
+  gitCherryPick,
+  gitCherryPickAbort,
+  gitCherryPickNoCommit,
   gitAddFiles,
   gitCommit,
-  gitResetSoft,
+  gitResetHard,
   gitUnstageAll,
+  isAncestorCommit,
   isWorkingTreeClean,
+  listCommitsAfter,
   runGitCommandUnchecked,
   resolveCommitSha
 } from "./gitService.js";
@@ -127,11 +133,11 @@ export function formatSplitPlan(plan) {
   return lines.join("\n");
 }
 
-function buildRecoveryMessage(originalSha) {
+function buildRecoveryMessage(originalHeadSha) {
   return [
     "Split execution failed. To recover:",
-    `- Find the original commit in \`git reflog\` (expected SHA: ${originalSha})`,
-    `- Restore it with \`git reset --hard ${originalSha}\``
+    `- Find the original HEAD in \`git reflog\` (expected SHA: ${originalHeadSha})`,
+    `- Restore it with \`git reset --hard ${originalHeadSha}\``
   ].join("\n");
 }
 
@@ -148,8 +154,14 @@ function getDirtyWorkingTreeSummary(cwd) {
     .join("\n");
 }
 
+function sortPlanCommits(plan) {
+  return [...plan.commits].sort((left, right) => left.order - right.order);
+}
+
 export function executeSplit(plan, commitId, cwd) {
-  const originalSha = resolveCommitSha(commitId, cwd);
+  const targetSha = resolveCommitSha(commitId, cwd);
+  const originalHeadSha = getCurrentHeadSha(cwd);
+  const orderedCommits = sortPlanCommits(plan);
 
   try {
     if (!isWorkingTreeClean(cwd)) {
@@ -161,23 +173,43 @@ export function executeSplit(plan, commitId, cwd) {
       );
     }
 
-    const headSha = getCurrentHeadSha(cwd);
-    if (headSha !== originalSha) {
-      throw new Error(
-        `Can only split the current HEAD commit. Move ${commitId} to HEAD first with an interactive rebase.`
-      );
+    if (!isAncestorCommit(targetSha, originalHeadSha, cwd)) {
+      throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
     }
 
-    gitResetSoft(cwd);
+    const parents = getCommitParents(targetSha, cwd);
+    if (parents.length !== 1) {
+      throw new Error("Only non-merge commits can be split automatically.");
+    }
 
-    for (const commit of [...plan.commits].sort((left, right) => left.order - right.order)) {
+    const [parentSha] = parents;
+    const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
+
+    for (const replayCommit of commitsToReplay) {
+      if (getCommitParents(replayCommit, cwd).length !== 1) {
+        throw new Error(
+          "Automatic split currently supports linear history only. Rebase merge commits manually first."
+        );
+      }
+    }
+
+    gitResetHard(parentSha, cwd);
+    gitCherryPickNoCommit(targetSha, cwd);
+
+    for (const commit of orderedCommits) {
       gitUnstageAll(cwd);
       gitAddFiles(commit.files, cwd);
       gitCommit(commit.message, cwd);
     }
+
+    for (const replayCommit of commitsToReplay) {
+      gitCherryPick(replayCommit, cwd);
+    }
   } catch (error) {
+    gitCherryPickAbort(cwd);
+    runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
     console.error(error.message);
-    console.error(buildRecoveryMessage(originalSha));
+    console.error(buildRecoveryMessage(originalHeadSha));
     throw new Error("Split execution aborted.");
   }
 }

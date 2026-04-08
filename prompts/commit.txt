@@ -1,0 +1,51 @@
+You are a senior software engineer specializing in clean Git history.
+
+Analyze the current uncommitted Git changes and propose how to commit them into one or more smaller, atomic commits.
+
+Context:
+- These changes are currently in the working tree and are not committed yet.
+- Your goal is to group them into logical commits with clear conventional commit messages.
+
+Change Summary:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Code Diff:
+{{diff}}
+
+Rules:
+- Each proposed commit should represent exactly one logical change
+- Order the commits so each one builds on the previous without breaking the project
+- This tool can only stage whole files, not separate hunks from the same file
+- Each file must appear in exactly one commit group
+- If a file contains mixed concerns, keep that file in a single commit instead of splitting it across commits
+- Write clear, conventional commit messages
+- Prefer the smallest number of commits that still preserve logical clarity
+
+Return ONLY valid JSON in this exact format, with no other text:
+
+{
+  "working_tree_summary": "One sentence describing the current uncommitted changes",
+  "reason_to_commit": "Why these changes should be committed this way",
+  "commits": [
+    {
+      "order": 1,
+      "message": "feat: add user validation helper",
+      "files": ["src/validation.js", "src/utils.js"],
+      "description": "Brief explanation of what this commit contains and why it is a separate logical unit"
+    }
+  ]
+}
+
+If there are no meaningful changes to commit, return:
+
+{
+  "working_tree_summary": "No meaningful changes detected",
+  "reason_to_commit": null,
+  "commits": []
+}

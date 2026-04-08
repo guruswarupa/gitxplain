@@ -16,6 +16,7 @@ Supported providers:
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
+- Supports quick repository log output for recent history inspection
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -61,6 +62,7 @@ cp .env.example .env
 
 ```bash
 gitxplain help
+gitxplain log --log
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
 gitxplain <commit-id> --issues
@@ -78,6 +80,7 @@ gitxplain <commit-id> --stream
 gitxplain <commit-id> --clipboard
 gitxplain <commit-id> --verbose
 gitxplain <commit-id> --quiet
+gitxplain log --log
 gitxplain <start>..<end> --markdown
 gitxplain --branch main --review
 gitxplain --pr origin/main --security
@@ -91,6 +94,7 @@ Examples:
 
 ```bash
 npm start -- HEAD~1 --summary
+npm start -- log --log
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
 npm start -- HEAD~5..HEAD --markdown
@@ -147,6 +151,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
 - `--split`: propose how to split a commit into multiple atomic commits
+- `--log`: print recent Git log entries for the current repository
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split plan without applying it
 - `--json`: return structured JSON instead of formatted text
@@ -154,6 +159,17 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--html`: return HTML output
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
+
+## Repository Log
+
+Print recent log entries from the current repository:
+
+```bash
+gitxplain log
+gitxplain --log
+```
+
+Both forms print the latest commits in a compact one-line format using the current repository, without calling the LLM.
 
 ## Comparison Modes
 

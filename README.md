@@ -246,7 +246,7 @@ Actually merge the current branch into the `release` branch:
 gitxplain --merge --execute
 ```
 
-This command looks at commits on your current branch that are not yet on `release`, detects semantic version bumps in their diffs, and only proceeds when release-version changes are found. On execution it checks out `release` or creates it from the default base branch, then creates a merge commit from your current branch into `release`.
+This command scans commits on your current branch after the branch split point, finds the latest semantic version bump in the history, and promotes the commit range up to that version onto `release`. If `release` already contains an earlier version bump, it starts after that released version and only picks the next range. If no prior released version is found, it promotes everything from the first branch commit through the latest version-bump commit.
 
 ## Commit Working Tree
 

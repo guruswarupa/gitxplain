@@ -39,7 +39,7 @@ diff --git a/README.md b/README.md
   assert.deepEqual(change.to, []);
 });
 
-test("buildReleaseWindows groups commits through each version bump", () => {
+test("buildReleaseWindows groups commits by release version and merges repeated bumps", () => {
   const sourceCommits = [
     {
       shortSha: "1111111",
@@ -55,12 +55,18 @@ test("buildReleaseWindows groups commits through each version bump", () => {
     },
     {
       shortSha: "3333333",
+      subject: "fix: follow-up for 0.1.1",
+      releaseVersion: "0.1.1",
+      versionChange: { from: ["0.1.1"], to: ["0.1.1"], hasVersionChange: false }
+    },
+    {
+      shortSha: "4444444",
       subject: "feat: start release 0.1.2",
       releaseVersion: null,
       versionChange: { from: [], to: [], hasVersionChange: false }
     },
     {
-      shortSha: "4444444",
+      shortSha: "5555555",
       subject: "chore: bump to 0.1.2",
       releaseVersion: "0.1.2",
       versionChange: { from: ["0.1.1"], to: ["0.1.2"], hasVersionChange: true }
@@ -71,9 +77,9 @@ test("buildReleaseWindows groups commits through each version bump", () => {
 
   assert.equal(windows.length, 2);
   assert.equal(windows[0].version, "0.1.1");
-  assert.deepEqual(windows[0].commits.map((commit) => commit.shortSha), ["1111111", "2222222"]);
+  assert.deepEqual(windows[0].commits.map((commit) => commit.shortSha), ["1111111", "2222222", "3333333", "4444444"]);
   assert.equal(windows[1].version, "0.1.2");
-  assert.deepEqual(windows[1].commits.map((commit) => commit.shortSha), ["3333333", "4444444"]);
+  assert.deepEqual(windows[1].commits.map((commit) => commit.shortSha), ["5555555"]);
 });
 
 test("selectReleaseWindows skips versions already released", () => {
@@ -116,7 +122,7 @@ test("selectReleaseWindows skips versions already released", () => {
   assert.deepEqual(selection.releasedVersions, ["0.1.1"]);
   assert.equal(selection.windows.length, 1);
   assert.equal(selection.windows[0].version, "0.1.2");
-  assert.deepEqual(selection.windows[0].commits.map((commit) => commit.shortSha), ["3333333", "4444444"]);
+  assert.deepEqual(selection.windows[0].commits.map((commit) => commit.shortSha), ["4444444"]);
 });
 
 test("selectReleaseWindows returns all windows when no versions were released yet", () => {
@@ -151,6 +157,53 @@ test("selectReleaseWindows returns all windows when no versions were released ye
 
   assert.equal(selection.windows.length, 2);
   assert.deepEqual(selection.windows.map((window) => window.version), ["0.1.1", "0.1.2"]);
+});
+
+test("selectReleaseWindows picks only the latest unreleased version when some exist already", () => {
+  const sourceCommits = [
+    {
+      shortSha: "1111111",
+      subject: "prep 0.1.1",
+      releaseVersion: null,
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      shortSha: "2222222",
+      subject: "bump 0.1.1",
+      releaseVersion: "0.1.1",
+      versionChange: { from: ["0.1.0"], to: ["0.1.1"], hasVersionChange: true }
+    },
+    {
+      shortSha: "3333333",
+      subject: "prep 0.1.2",
+      releaseVersion: null,
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      shortSha: "4444444",
+      subject: "bump 0.1.2",
+      releaseVersion: "0.1.2",
+      versionChange: { from: ["0.1.1"], to: ["0.1.2"], hasVersionChange: true }
+    },
+    {
+      shortSha: "5555555",
+      subject: "prep 0.1.3",
+      releaseVersion: null,
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      shortSha: "6666666",
+      subject: "bump 0.1.3",
+      releaseVersion: "0.1.3",
+      versionChange: { from: ["0.1.2"], to: ["0.1.3"], hasVersionChange: true }
+    }
+  ];
+
+  const releaseCommits = [{ subject: "release 0.1.1", releaseVersion: null }];
+  const selection = selectReleaseWindows(sourceCommits, releaseCommits);
+
+  assert.equal(selection.windows.length, 1);
+  assert.equal(selection.windows[0].version, "0.1.3");
 });
 
 test("formatReleaseMergePlan renders release commit plan", () => {

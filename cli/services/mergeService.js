@@ -6,8 +6,8 @@ import {
   getMergeBase,
   gitCheckout,
   gitCheckoutNewBranch,
-  gitCherryPickNoCommit,
   gitCherryPickAbort,
+  gitCherryPickNoCommit,
   gitCommit,
   gitDeleteBranch,
   gitResetHard,
@@ -29,6 +29,7 @@ const ANSI = {
 
 const RELEASE_BRANCH = "release";
 const VERSION_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g;
+const RELEASE_SUBJECT_PATTERN = /^release\s+(.+)$/i;
 
 function supportsColor() {
   return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
@@ -85,6 +86,10 @@ export function detectVersionChanges(diff) {
   };
 }
 
+function getReleaseVersion(change) {
+  return change.to.at(-1) ?? null;
+}
+
 function getCommitSubject(ref, cwd) {
   return runGitCommand(["log", "-1", "--pretty=format:%s", ref], cwd);
 }
@@ -102,12 +107,16 @@ function getCommitDiff(ref, cwd) {
 }
 
 function inspectCommit(sha, cwd) {
+  const subject = getCommitSubject(sha, cwd);
+  const versionChange = detectVersionChanges(getCommitDiff(sha, cwd));
+
   return {
     sha,
     shortSha: sha.slice(0, 7),
-    subject: getCommitSubject(sha, cwd),
+    subject,
     files: getCommitFiles(sha, cwd),
-    versionChange: detectVersionChanges(getCommitDiff(sha, cwd))
+    versionChange,
+    releaseVersion: getReleaseVersion(versionChange)
   };
 }
 
@@ -115,65 +124,58 @@ function summarizeVersionPair(change) {
   return `${change.from.join(", ")} -> ${change.to.join(", ")}`;
 }
 
-function getLatestVersionSummary(commits) {
-  const latest = [...commits].reverse().find((commit) => commit.versionChange.hasVersionChange) ?? null;
-  return latest ? summarizeVersionPair(latest.versionChange) : null;
+function getReleasedVersions(releaseCommits) {
+  const explicitVersions = releaseCommits
+    .map((commit) => commit.subject.match(RELEASE_SUBJECT_PATTERN)?.[1]?.trim() ?? null)
+    .filter(Boolean);
+
+  const fallbackVersions = releaseCommits
+    .map((commit) => commit.releaseVersion)
+    .filter(Boolean);
+
+  return new Set([...explicitVersions, ...fallbackVersions]);
 }
 
-function findLastVersionSummaryIndex(commits, targetSummary) {
-  if (!targetSummary) {
-    return -1;
-  }
+export function buildReleaseWindows(sourceCommits) {
+  const windows = [];
+  let pendingCommits = [];
 
-  for (let index = commits.length - 1; index >= 0; index -= 1) {
-    const commit = commits[index];
-    if (!commit.versionChange.hasVersionChange) {
+  for (const commit of sourceCommits) {
+    pendingCommits.push(commit);
+
+    if (!commit.releaseVersion) {
       continue;
     }
 
-    if (summarizeVersionPair(commit.versionChange) === targetSummary) {
-      return index;
-    }
+    windows.push({
+      version: commit.releaseVersion,
+      commits: pendingCommits,
+      startRef: pendingCommits[0]?.shortSha ?? null,
+      endRef: commit.shortSha
+    });
+    pendingCommits = [];
   }
 
-  return -1;
+  return windows;
 }
 
-export function selectReleaseCommits(sourceCommits, lastReleasedVersionSummary = null) {
-  const latestSourceVersionIndex = [...sourceCommits]
-    .map((commit, index) => ({ commit, index }))
-    .reverse()
-    .find(({ commit }) => commit.versionChange.hasVersionChange)?.index ?? -1;
+export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
+  const windows = buildReleaseWindows(sourceCommits);
+  const releasedVersions = getReleasedVersions(releaseCommits);
+  const unreleasedWindows = windows.filter((window) => !releasedVersions.has(window.version));
 
-  const latestSourceVersionSummary =
-    latestSourceVersionIndex === -1 ? null : summarizeVersionPair(sourceCommits[latestSourceVersionIndex].versionChange);
-  const lastReleasedIndex = findLastVersionSummaryIndex(sourceCommits, lastReleasedVersionSummary);
-  const startIndex = lastReleasedIndex + 1;
-  const endIndex = sourceCommits.length - 1;
-
-  if (startIndex > endIndex) {
-    return {
-      commitsToApply: [],
-      latestSourceVersionSummary,
-      lastReleasedVersionSummary,
-      startIndex: -1,
-      endIndex
-    };
-  }
+  const selectedWindows =
+    releasedVersions.size === 0
+      ? unreleasedWindows
+      : unreleasedWindows.length > 0
+        ? [unreleasedWindows.at(-1)]
+        : [];
 
   return {
-    commitsToApply: sourceCommits.slice(startIndex, endIndex + 1),
-    latestSourceVersionSummary,
-    lastReleasedVersionSummary,
-    startIndex,
-    endIndex
+    windows: selectedWindows,
+    releasedVersions: [...releasedVersions],
+    latestDetectedVersion: windows.at(-1)?.version ?? null
   };
-}
-
-function buildReleaseMessage(plan) {
-  return plan.latestSourceVersionSummary
-    ? `release: promote ${plan.latestSourceVersionSummary}`
-    : `release: sync ${plan.sourceBranch}`;
 }
 
 export function buildReleaseMergePlan(cwd) {
@@ -188,8 +190,7 @@ export function buildReleaseMergePlan(cwd) {
   const sourceCommitShas = listCommitsAfter(mergeBase, "HEAD", cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
-  const lastReleasedVersionSummary = getLatestVersionSummary(releaseCommits);
-  const selection = selectReleaseCommits(sourceCommits, lastReleasedVersionSummary);
+  const selection = selectReleaseWindows(sourceCommits, releaseCommits);
 
   return {
     releaseBranch: RELEASE_BRANCH,
@@ -197,20 +198,17 @@ export function buildReleaseMergePlan(cwd) {
     baseRef,
     mergeBase,
     releaseExists,
-    lastReleasedVersionSummary,
-    latestSourceVersionSummary: selection.latestSourceVersionSummary,
-    commits: selection.commitsToApply,
-    startRef: selection.commitsToApply[0]?.shortSha ?? null,
-    endRef: selection.commitsToApply.at(-1)?.shortSha ?? null,
-    createFromRef: releaseExists ? RELEASE_BRANCH : mergeBase,
-    releaseMessage: null
+    releasedVersions: selection.releasedVersions,
+    latestDetectedVersion: selection.latestDetectedVersion,
+    windows: selection.windows,
+    createFromRef: releaseExists ? RELEASE_BRANCH : mergeBase
   };
 }
 
 export function finalizeReleaseMergePlan(plan) {
   return {
     ...plan,
-    releaseMessage: plan.latestSourceVersionSummary ? buildReleaseMessage(plan) : null
+    totalCommits: plan.windows.reduce((count, window) => count + window.commits.length, 0)
   };
 }
 
@@ -220,25 +218,28 @@ export function formatReleaseMergePlan(plan) {
     `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${plan.sourceBranch}`,
     `${colorize("Target Branch:", ANSI.bold + ANSI.cyan)} ${plan.releaseBranch}`,
     `${colorize("Base Ref:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
-    `${colorize("Last Released Version:", ANSI.bold + ANSI.cyan)} ${plan.lastReleasedVersionSummary ?? "none"}`,
-    `${colorize("Latest Source Version:", ANSI.bold + ANSI.cyan)} ${plan.latestSourceVersionSummary ?? "none"}`
+    `${colorize("Released Versions:", ANSI.bold + ANSI.cyan)} ${
+      plan.releasedVersions.length > 0 ? plan.releasedVersions.join(", ") : "none"
+    }`,
+    `${colorize("Latest Detected Version:", ANSI.bold + ANSI.cyan)} ${plan.latestDetectedVersion ?? "none"}`
   ];
 
-  if (plan.commits.length === 0) {
-    lines.push(colorize("No unreleased commits detected. Nothing to merge.", ANSI.green));
+  if (plan.windows.length === 0) {
+    lines.push(colorize("No unreleased release commits detected. Nothing to merge.", ANSI.green));
     return lines.join("\n");
   }
 
-  lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${plan.startRef}..${plan.endRef}`);
-  lines.push(`${colorize("Release Commit:", ANSI.bold + ANSI.cyan)} ${plan.releaseMessage}`);
-
-  for (const commit of plan.commits) {
+  for (const window of plan.windows) {
     lines.push("");
-    lines.push(colorize(`${commit.shortSha} ${commit.subject}`, ANSI.bold + ANSI.yellow));
-    if (commit.versionChange.hasVersionChange) {
-      lines.push(`${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+    lines.push(colorize(`release ${window.version}`, ANSI.bold + ANSI.yellow));
+    lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${window.startRef}..${window.endRef}`);
+
+    for (const commit of window.commits) {
+      lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
+      if (commit.versionChange.hasVersionChange) {
+        lines.push(`  ${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+      }
     }
-    lines.push(`${colorize("Files:", ANSI.bold + ANSI.cyan)} ${commit.files.join(", ")}`);
   }
 
   return lines.join("\n");
@@ -259,8 +260,8 @@ function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdRelea
 }
 
 export function executeReleaseMerge(plan, cwd) {
-  if (plan.commits.length === 0) {
-    throw new Error("No unreleased commits detected. Nothing to merge.");
+  if (plan.windows.length === 0) {
+    throw new Error("No unreleased release commits detected. Nothing to merge.");
   }
 
   if (!isWorkingTreeClean(cwd)) {
@@ -279,11 +280,13 @@ export function executeReleaseMerge(plan, cwd) {
       gitCheckoutNewBranch(RELEASE_BRANCH, plan.createFromRef, cwd);
     }
 
-    for (const commit of plan.commits) {
-      gitCherryPickNoCommit(commit.sha, cwd);
-    }
+    for (const window of plan.windows) {
+      for (const commit of window.commits) {
+        gitCherryPickNoCommit(commit.sha, cwd);
+      }
 
-    gitCommit(plan.releaseMessage, cwd);
+      gitCommit(`release ${window.version}`, cwd);
+    }
   } catch (error) {
     gitCherryPickAbort(cwd);
 
@@ -296,7 +299,7 @@ export function executeReleaseMerge(plan, cwd) {
         gitDeleteBranch(RELEASE_BRANCH, cwd);
       }
     } catch {
-      // Keep the original error and show recovery guidance.
+      // Preserve original failure and print recovery guidance below.
     }
 
     console.error(error.message);

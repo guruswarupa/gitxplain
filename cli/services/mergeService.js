@@ -353,6 +353,28 @@ export function selectReleaseTags(sourceCommits, existingTagNames = []) {
   };
 }
 
+function getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd) {
+  if (!releaseExists) {
+    return {
+      mergeBase: null,
+      sourceCommitShas: listBranchCommits("HEAD", cwd)
+    };
+  }
+
+  try {
+    const mergeBase = getMergeBase(baseRef, "HEAD", cwd);
+    return {
+      mergeBase,
+      sourceCommitShas: listCommitsAfter(mergeBase, "HEAD", cwd)
+    };
+  } catch {
+    return {
+      mergeBase: null,
+      sourceCommitShas: listBranchCommits("HEAD", cwd)
+    };
+  }
+}
+
 export function buildReleaseMergePlan(cwd) {
   const sourceBranch = getCurrentBranchName(cwd);
   if (sourceBranch === RELEASE_BRANCH) {
@@ -361,8 +383,7 @@ export function buildReleaseMergePlan(cwd) {
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
-  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
+  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
   const selection = selectReleaseWindows(sourceCommits, releaseCommits);
@@ -388,8 +409,7 @@ export function buildReleaseTagPlan(cwd) {
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
-  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
+  const { mergeBase, sourceCommitShas } = getReleaseTrackSourceCommitShas(releaseExists, baseRef, cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const selection = selectReleaseTags(sourceCommits, listTags(cwd));
 

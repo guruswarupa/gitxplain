@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  buildReleaseTagPlan,
   buildReleaseMergePlan,
   buildReleaseWindows,
   detectVersionChanges,
@@ -402,6 +403,43 @@ test("executeReleaseMerge creates an orphan release branch without an initializa
     }
 
     assert.equal(hasMergeBase, false);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("buildReleaseTagPlan works when release is disconnected from main", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-tag-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+    runGit("tag", "-a", "0.1.0", "-m", "release 0.1.0");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    const mergePlan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(mergePlan, repoDir);
+    runGit("checkout", "main");
+
+    const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlan(repoDir));
+
+    assert.equal(tagPlan.releaseExists, true);
+    assert.equal(tagPlan.mergeBase, null);
+    assert.deepEqual(tagPlan.taggedVersions, ["0.1.0"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }

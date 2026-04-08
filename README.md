@@ -15,6 +15,7 @@ Supported providers:
 
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
+- Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -69,6 +70,7 @@ gitxplain <commit-id> --full
 gitxplain <commit-id> --lines
 gitxplain <commit-id> --review
 gitxplain <commit-id> --security
+gitxplain <commit-id> --split
 gitxplain <commit-id> --json
 gitxplain <commit-id> --markdown
 gitxplain <commit-id> --html
@@ -82,6 +84,7 @@ gitxplain --pr origin/main --security
 gitxplain install-hook
 gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
 gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
+gitxplain <commit-id> --split --execute
 ```
 
 Examples:
@@ -95,6 +98,7 @@ npm start -- --branch main --review
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
 npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
+npm start -- HEAD --split --execute
 ```
 
 ## Running The CLI
@@ -142,6 +146,9 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--lines`: file-by-file, line-by-line walkthrough of the changed code
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
+- `--split`: propose how to split a commit into multiple atomic commits
+- `--execute`: apply a proposed split by rewriting history
+- `--dry-run`: preview the split plan without applying it
 - `--json`: return structured JSON instead of formatted text
 - `--markdown`: return Markdown output
 - `--html`: return HTML output
@@ -170,6 +177,30 @@ gitxplain --pr origin/main --security
 ```
 
 `--branch` and `--pr` compare the current branch to a base ref using the merge base with `HEAD`.
+
+## Commit Splitting
+
+Preview how a commit could be split:
+
+```bash
+gitxplain HEAD~1 --split
+```
+
+Actually split the current `HEAD` commit into smaller commits:
+
+```bash
+gitxplain HEAD --split --execute
+```
+
+Use a specific provider for the analysis:
+
+```bash
+gitxplain HEAD --split --provider gemini
+```
+
+`--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
+
+Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
 
 ## Config File
 

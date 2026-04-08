@@ -1,20 +1,24 @@
 import process from "node:process";
 import {
-  createEmptyRootCommit,
+  deletePaths,
   getCurrentBranchName,
   getCurrentHeadSha,
   getDefaultBaseRef,
   getMergeBase,
   gitCheckout,
-  gitCheckoutNewBranch,
+  gitCheckoutOrphan,
   gitCherryPickAbort,
   gitCherryPickNoCommit,
   gitCommit,
+  gitCreateAnnotatedTag,
   gitDeleteBranch,
+  gitDeleteTag,
+  gitRemoveCachedAll,
   gitResetHard,
   isWorkingTreeClean,
   listBranchCommits,
   listCommitsAfter,
+  listTags,
   localBranchExists,
   resolveCommitSha,
   runGitCommand
@@ -33,6 +37,7 @@ const VERSION_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)
 const RELEASE_SUBJECT_PATTERN = /^release\s+(.+)$/i;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const INTEGER_PATTERN = /^\d+$/;
+const TAG_VERSION_PATTERN = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|\d+)$/;
 
 function supportsColor() {
   return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
@@ -253,6 +258,14 @@ function getReleasedVersions(releaseCommits) {
   return new Set([...explicitVersions, ...fallbackVersions]);
 }
 
+function extractTaggedVersions(tagNames) {
+  return new Set(
+    tagNames
+      .map((tagName) => tagName.match(TAG_VERSION_PATTERN)?.[1] ?? null)
+      .filter(Boolean)
+  );
+}
+
 export function buildReleaseWindows(sourceCommits) {
   const windows = [];
   let windowStartIndex = 0;
@@ -315,6 +328,30 @@ export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
   };
 }
 
+export function selectReleaseTags(sourceCommits, existingTagNames = []) {
+  const windows = buildReleaseWindows(sourceCommits);
+  const taggedVersions = extractTaggedVersions(existingTagNames);
+  const tags = windows
+    .filter((window) => !taggedVersions.has(window.version))
+    .map((window) => {
+      const targetCommit = window.commits.at(-1) ?? null;
+      return {
+        ...window,
+        tagName: window.version,
+        targetSha: targetCommit?.sha ?? null,
+        targetShortSha: targetCommit?.shortSha ?? null,
+        targetSubject: targetCommit?.subject ?? null
+      };
+    })
+    .filter((tag) => tag.targetSha != null);
+
+  return {
+    tags,
+    taggedVersions: [...taggedVersions],
+    latestDetectedVersion: windows.at(-1)?.version ?? null
+  };
+}
+
 export function buildReleaseMergePlan(cwd) {
   const sourceBranch = getCurrentBranchName(cwd);
   if (sourceBranch === RELEASE_BRANCH) {
@@ -342,10 +379,41 @@ export function buildReleaseMergePlan(cwd) {
   };
 }
 
+export function buildReleaseTagPlan(cwd) {
+  const sourceBranch = getCurrentBranchName(cwd);
+  if (sourceBranch === RELEASE_BRANCH) {
+    throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --tag.`);
+  }
+
+  const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
+  const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
+  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
+  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
+  const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
+  const selection = selectReleaseTags(sourceCommits, listTags(cwd));
+
+  return {
+    sourceBranch,
+    baseRef,
+    mergeBase,
+    releaseExists,
+    taggedVersions: selection.taggedVersions,
+    latestDetectedVersion: selection.latestDetectedVersion,
+    tags: selection.tags
+  };
+}
+
 export function finalizeReleaseMergePlan(plan) {
   return {
     ...plan,
     totalCommits: plan.windows.reduce((count, window) => count + window.commits.length, 0)
+  };
+}
+
+export function finalizeReleaseTagPlan(plan) {
+  return {
+    ...plan,
+    totalCommits: plan.tags.reduce((count, tag) => count + tag.commits.length, 0)
   };
 }
 
@@ -372,6 +440,39 @@ export function formatReleaseMergePlan(plan) {
     lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${window.startRef}..${window.endRef}`);
 
     for (const commit of window.commits) {
+      lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
+      if (commit.versionChange.hasVersionChange) {
+        lines.push(`  ${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function formatReleaseTagPlan(plan) {
+  const lines = [
+    colorize("Release Tag Plan", ANSI.bold + ANSI.cyan),
+    `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${plan.sourceBranch}`,
+    `${colorize("Base Ref:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
+    `${colorize("Tagged Versions:", ANSI.bold + ANSI.cyan)} ${
+      plan.taggedVersions.length > 0 ? plan.taggedVersions.join(", ") : "none"
+    }`,
+    `${colorize("Latest Detected Version:", ANSI.bold + ANSI.cyan)} ${plan.latestDetectedVersion ?? "none"}`
+  ];
+
+  if (plan.tags.length === 0) {
+    lines.push(colorize("No unreleased release tags detected. Nothing to tag.", ANSI.green));
+    return lines.join("\n");
+  }
+
+  for (const tag of plan.tags) {
+    lines.push("");
+    lines.push(colorize(`tag ${tag.tagName}`, ANSI.bold + ANSI.yellow));
+    lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${tag.startRef}..${tag.endRef}`);
+    lines.push(`${colorize("Target Commit:", ANSI.bold + ANSI.cyan)} ${tag.targetShortSha} ${tag.targetSubject}`);
+
+    for (const commit of tag.commits) {
       lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
       if (commit.versionChange.hasVersionChange) {
         lines.push(`  ${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
@@ -409,13 +510,15 @@ export function executeReleaseMerge(plan, cwd) {
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const originalReleaseSha = releaseExists ? resolveCommitSha(RELEASE_BRANCH, cwd) : null;
   const originalHeadSha = getCurrentHeadSha(cwd);
+  const originalHeadFiles = releaseExists ? [] : getCommitFiles("HEAD", cwd);
 
   try {
     if (releaseExists) {
       gitCheckout(RELEASE_BRANCH, cwd);
     } else {
-      const emptyRootCommit = createEmptyRootCommit("chore: initialize release branch", cwd);
-      gitCheckoutNewBranch(RELEASE_BRANCH, emptyRootCommit, cwd);
+      gitCheckoutOrphan(RELEASE_BRANCH, cwd);
+      gitRemoveCachedAll(cwd);
+      deletePaths(originalHeadFiles, cwd);
     }
 
     for (const window of plan.windows) {
@@ -454,6 +557,31 @@ export function executeReleaseMerge(plan, cwd) {
   const updatedReleaseSha = getCurrentHeadSha(cwd);
   if (updatedReleaseSha === originalHeadSha) {
     throw new Error("Release merge did not create any new commits.");
+  }
+}
+
+export function executeReleaseTagPlan(plan, cwd) {
+  if (plan.tags.length === 0) {
+    throw new Error("No unreleased release tags detected. Nothing to tag.");
+  }
+
+  const createdTags = [];
+
+  try {
+    for (const tag of plan.tags) {
+      gitCreateAnnotatedTag(tag.tagName, tag.targetSha, `release ${tag.tagName}`, cwd);
+      createdTags.push(tag.tagName);
+    }
+  } catch (error) {
+    for (const tagName of createdTags.reverse()) {
+      try {
+        gitDeleteTag(tagName, cwd);
+      } catch {
+        // Preserve the original failure; partial cleanup is best-effort.
+      }
+    }
+
+    throw error;
   }
 }
 

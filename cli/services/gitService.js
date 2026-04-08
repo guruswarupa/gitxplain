@@ -198,6 +198,22 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
+  return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
+}
+
+export function gitDeleteTag(tagName, cwd) {
+  return runGitCommand(["tag", "-d", tagName], cwd);
+}
+
+export function listTags(cwd) {
+  const output = runGitCommand(["tag", "--list"], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function hasStagedChanges(cwd) {
   const result = runGitCommandUnchecked(["diff", "--cached", "--quiet"], cwd);
 

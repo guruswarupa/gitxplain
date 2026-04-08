@@ -20,7 +20,16 @@ import {
   isGitRepository
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
-import { buildReleaseMergePlan, executeReleaseMerge, finalizeReleaseMergePlan, formatReleaseMergePlan } from "./services/mergeService.js";
+import {
+  buildReleaseMergePlan,
+  buildReleaseTagPlan,
+  executeReleaseMerge,
+  executeReleaseTagPlan,
+  finalizeReleaseMergePlan,
+  finalizeReleaseTagPlan,
+  formatReleaseMergePlan,
+  formatReleaseTagPlan
+} from "./services/mergeService.js";
 import {
   formatFooter,
   formatHtmlOutput,
@@ -43,6 +52,7 @@ const MODE_FLAGS = new Map([
   ["--security", "security"],
   ["--split", "split"],
   ["--merge", "merge"],
+  ["--tag", "tag"],
   ["--commit", "commit"],
   ["--log", "log"],
   ["--status", "status"]
@@ -64,6 +74,8 @@ Usage:
   gitxplain --commit
   gitxplain merge
   gitxplain --merge
+  gitxplain tag
+  gitxplain --tag
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -82,6 +94,7 @@ What It Does:
   Generate summaries, reviews, security checks, and line-by-line walkthroughs
   Plan commits for uncommitted work and split oversized commits into atomic steps
   Merge release-version branch changes into a dedicated release branch
+  Tag release-version commit windows on the current branch
   Inspect recent repository history and working tree status without calling the LLM
   Run quick local actions to stage, unstage, or delete files
 
@@ -96,6 +109,7 @@ Modes:
   --security   Focus on security-relevant changes and concerns
   --split      Propose splitting a commit into smaller atomic commits
   --merge      Preview or apply a merge into the release branch based on version bumps
+  --tag        Preview or create release tags based on version bumps
   --commit     Propose commits for current uncommitted changes
   --log        Print recent Git log entries for the current repository
   --status     Print Git working tree status for the current repository
@@ -137,6 +151,8 @@ Examples:
   gitxplain --commit --execute
   gitxplain merge
   gitxplain --merge --execute
+  gitxplain tag
+  gitxplain --tag --execute
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -250,6 +266,7 @@ export function parseArgs(argv) {
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
   const isMergeCommand = subcommand === "merge";
+  const isTagCommand = subcommand === "tag";
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
@@ -262,6 +279,7 @@ export function parseArgs(argv) {
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
     mergeCommand: isMergeCommand,
+    tagCommand: isTagCommand,
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
@@ -273,6 +291,7 @@ export function parseArgs(argv) {
       isStatusCommand ||
       isCommitCommand ||
       isMergeCommand ||
+      isTagCommand ||
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
@@ -296,7 +315,8 @@ export function parseArgs(argv) {
     dryRun: flags.has("--dry-run"),
     log: flags.has("--log"),
     status: flags.has("--status"),
-    merge: flags.has("--merge")
+    merge: flags.has("--merge"),
+    tag: flags.has("--tag")
   };
 }
 
@@ -326,8 +346,9 @@ async function chooseModeInteractively() {
       "8. Security Review",
       "9. Split Commit",
       "10. Merge To Release Branch",
-      "11. Repository Log",
-      "12. Commit Working Tree",
+      "11. Tag Release Commits",
+      "12. Repository Log",
+      "13. Commit Working Tree",
       "> "
     ].join("\n")
   );
@@ -343,8 +364,9 @@ async function chooseModeInteractively() {
     "8": "security",
     "9": "split",
     "10": "merge",
-    "11": "log",
-    "12": "commit"
+    "11": "tag",
+    "12": "log",
+    "13": "commit"
   };
 
   return selections[answer] ?? "full";
@@ -533,6 +555,38 @@ export async function main(argv = process.argv) {
       console.log(`\nRelease promotion complete. Created ${plan.windows.length} release commit(s) on ${plan.releaseBranch}.`);
     } else {
       console.log(`\nThis is a preview. Run with --execute to create release commits on ${plan.releaseBranch}.`);
+    }
+
+    return 0;
+  }
+
+  if (mode === "tag" || parsed.tagCommand || parsed.tag) {
+    if (parsed.commitRef) {
+      throw new Error("--tag works from the current branch and does not accept a commit ref.");
+    }
+
+    const plan = finalizeReleaseTagPlan(buildReleaseTagPlan(cwd));
+
+    if (plan.tags.length === 0) {
+      console.log("No unreleased release tags detected. Nothing to tag.");
+      return 0;
+    }
+
+    console.log(formatReleaseTagPlan(plan));
+
+    if (parsed.execute && !parsed.dryRun) {
+      const confirmed = await askQuestion(
+        `\nThis will create ${plan.tags.length} release tag(s). Continue? (yes/no) > `
+      );
+      if (confirmed.toLowerCase() !== "yes") {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      executeReleaseTagPlan(plan, cwd);
+      console.log(`\nRelease tagging complete. Created ${plan.tags.length} release tag(s).`);
+    } else {
+      console.log("\nThis is a preview. Run with --execute to create release tags.");
     }
 
     return 0;

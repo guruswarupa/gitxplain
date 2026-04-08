@@ -221,7 +221,7 @@ Analysis:
     };
 
     console.log(`${COLORS.bold}${COLORS.cyan}GitHub Chat - Type 'repos' to select a repo, 'download' to clone the selected commit state, 'exit' to quit, 'clear' to reset history\n${COLORS.reset}`);
-    console.log(`${COLORS.cyan}Model: ${this.config.model} (${this.config.provider})\n${COLORS.reset}`);
+    console.log(`${COLORS.cyan}Model: gitXplain\n${COLORS.reset}`);
 
     while (true) {
       const userInput = await question("You: ");

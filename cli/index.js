@@ -521,7 +521,7 @@ export async function main(argv = process.argv) {
       );
       const config = getProviderConfig(parsed.provider, parsed.model);
       validateProviderConfig(config);
-      await startChatSession(connection.token, parsed.provider, parsed.model, userInfo.name || connection.user?.login);
+      await startChatSession(connection.token, userInfo.name || connection.user?.login, parsed.provider, parsed.model);
     } catch (configError) {
       console.error(`Missing LLM Key. Please check your .env variables or --provider flags.\n${configError.message}`);
       return 1;

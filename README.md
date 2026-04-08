@@ -9,6 +9,7 @@ Supported providers:
 - OpenRouter
 - Gemini
 - Ollama
+- Chutes AI
 
 ## Features
 
@@ -35,6 +36,7 @@ Optional environment variables:
 - `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_BASE_URL`
 - `OLLAMA_API_KEY` optional, default: `ollama`
 - `OLLAMA_MODEL`, `OLLAMA_BASE_URL` default: `http://127.0.0.1:11434/v1`
+- `CHUTES_API_KEY`, `CHUTES_MODEL`, `CHUTES_BASE_URL`
 
 You can start from:
 
@@ -45,6 +47,7 @@ cp .env.example .env
 ## Usage
 
 ```bash
+gitxplain help
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
 gitxplain <commit-id> --issues
@@ -53,6 +56,7 @@ gitxplain <commit-id> --impact
 gitxplain <commit-id> --full
 gitxplain <commit-id> --json
 gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
+gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
 ```
 
 Examples:
@@ -62,6 +66,39 @@ npm start -- HEAD~1 --summary
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
+npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
+```
+
+## Running The CLI
+
+To use the actual `gitxplain` command directly:
+
+```bash
+cd /home/guru/Dev/gitxplain
+npm link
+```
+
+Then from any Git repository:
+
+```bash
+gitxplain help
+gitxplain HEAD~1 --full
+gitxplain a1b2c3d --summary
+```
+
+The `gitxplain help` command also prints quick API-key setup examples for:
+
+- OpenAI
+- Groq
+- OpenRouter
+- Gemini
+- Ollama
+- Chutes AI
+
+If you do not want to link it globally, you can still run it locally:
+
+```bash
+node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 ```
 
 ## Output Modes
@@ -110,6 +147,14 @@ Ollama:
 ```bash
 export LLM_PROVIDER=ollama
 export OLLAMA_MODEL=llama3.2
+```
+
+Chutes AI:
+
+```bash
+export LLM_PROVIDER=chutes
+export CHUTES_API_KEY=your_key
+export CHUTES_MODEL=deepseek-ai/DeepSeek-V3-0324
 ```
 
 ## Development

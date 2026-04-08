@@ -15,6 +15,9 @@ Files Changed:
 Stats:
 {{stats}}
 
+Change Hints:
+{{change_hints}}
+
 Code Diff:
 {{diff}}
 
@@ -25,6 +28,9 @@ Rules:
 - Each file must appear in exactly one commit group
 - If a file contains mixed concerns, keep that file in a single commit instead of splitting it across commits
 - Write clear, conventional commit messages
+- Be conservative: do not describe comments, docs, renames, formatting, or refactors as new features or fixes unless the diff clearly changes runtime behavior
+- If the diff is comments-only or documentation-only, prefer `docs:` or `chore:` wording instead of `feat:`/`fix:`
+- The `Why` text must describe the actual change shown in the diff and must not invent implementation work that is not present
 - Prefer the smallest number of commits that still preserve logical clarity
 
 Return ONLY valid JSON in this exact format, with no other text:

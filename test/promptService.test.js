@@ -37,3 +37,27 @@ test("buildPrompt adds range prelude for commit ranges", () => {
   assert.match(prompt, /This analysis covers a range of commits/);
   assert.match(prompt, /Commit Count: 2/);
 });
+
+test("buildPrompt flags comment-only diffs as non-behavioral", () => {
+  const { prompt } = buildPrompt(
+    "commit",
+    {
+      ...commitData,
+      analysisType: "workingTree",
+      commitMessage: "Uncommitted working tree changes",
+      filesChanged: ["cli/services/configService.js"],
+      diff: [
+        "diff --git a/cli/services/configService.js b/cli/services/configService.js",
+        "index c4508b6..de4d996 100644",
+        "--- a/cli/services/configService.js",
+        "+++ b/cli/services/configService.js",
+        "@@ -14,6 +14,7 @@ function readJsonConfig(filePath) {",
+        "+// Load configuration with the following precedence:"
+      ].join("\n")
+    },
+    { maxDiffLines: 20 }
+  );
+
+  assert.match(prompt, /All changed lines appear to be comments or whitespace/);
+  assert.match(prompt, /prefer `docs:` or `chore:` wording instead of `feat:`\/`fix:`/);
+});

@@ -22,14 +22,26 @@ import {
   fetchCommitData,
   fetchWorkingTreeData,
   gitAddFiles,
+  gitPush,
+  gitStashPop,
   gitRestoreStaged,
   getRepositoryLog,
   getRepositoryStatus,
   getDefaultBaseRef,
-  isGitRepository
+  isGitRepository,
+  resolveStashRef
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
-import { buildReleaseMergePlan, executeReleaseMerge, finalizeReleaseMergePlan, formatReleaseMergePlan } from "./services/mergeService.js";
+import {
+  buildReleaseMergePlan,
+  buildReleaseTagPlan,
+  executeReleaseMerge,
+  executeReleaseTagPlan,
+  finalizeReleaseMergePlan,
+  finalizeReleaseTagPlan,
+  formatReleaseMergePlan,
+  formatReleaseTagPlan
+} from "./services/mergeService.js";
 import {
   formatFooter,
   formatHtmlOutput,
@@ -52,6 +64,7 @@ const MODE_FLAGS = new Map([
   ["--security", "security"],
   ["--split", "split"],
   ["--merge", "merge"],
+  ["--tag", "tag"],
   ["--commit", "commit"],
   ["--log", "log"],
   ["--status", "status"]
@@ -73,6 +86,8 @@ Usage:
   gitxplain --commit
   gitxplain merge
   gitxplain --merge
+  gitxplain tag
+  gitxplain --tag
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -80,6 +95,8 @@ Usage:
   gitxplain add <path> [more-paths...]
   gitxplain remove <path> [more-paths...]
   gitxplain del <path> [more-paths...]
+  gitxplain pop [stash-index]
+  gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
   gitxplain --connect-git [token]
   gitxplain --boot [options]
@@ -93,8 +110,9 @@ What It Does:
   Generate summaries, reviews, security checks, and line-by-line walkthroughs
   Plan commits for uncommitted work and split oversized commits into atomic steps
   Merge release-version branch changes into a dedicated release branch
+  Tag release-version commit windows on the current branch
   Inspect recent repository history and working tree status without calling the LLM
-  Run quick local actions to stage, unstage, or delete files
+  Run quick local actions to stage, unstage, delete files, pop stashes, or push
 
 Modes:
   --summary    Generate a one-line summary of a change
@@ -107,6 +125,7 @@ Modes:
   --security   Focus on security-relevant changes and concerns
   --split      Propose splitting a commit into smaller atomic commits
   --merge      Preview or apply a merge into the release branch based on version bumps
+  --tag        Preview or create release tags based on version bumps
   --commit     Propose commits for current uncommitted changes
   --log        Print recent Git log entries for the current repository
   --status     Print Git working tree status for the current repository
@@ -117,6 +136,8 @@ Quick Actions:
   add         Stage one or more files with git add
   remove      Unstage one or more files with git restore --staged
   del         Delete one or more files from the working tree
+  pop         Pop a stash entry with a plain numeric index like "pop 2"
+  push        Run git push, optionally with a remote and branch
 
 Output:
   --json       Print structured JSON output
@@ -150,6 +171,8 @@ Examples:
   gitxplain --commit --execute
   gitxplain merge
   gitxplain --merge --execute
+  gitxplain tag
+  gitxplain --tag --execute
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -157,6 +180,10 @@ Examples:
   gitxplain add README.md
   gitxplain remove README.md
   gitxplain del scratch.txt
+  gitxplain pop
+  gitxplain pop 2
+  gitxplain push
+  gitxplain push origin main
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -265,9 +292,12 @@ export function parseArgs(argv) {
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
   const isMergeCommand = subcommand === "merge";
+  const isTagCommand = subcommand === "tag";
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
+  const isPopCommand = subcommand === "pop";
+  const isPushCommand = subcommand === "push";
 
   return {
     subcommand,
@@ -279,12 +309,18 @@ export function parseArgs(argv) {
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
     mergeCommand: isMergeCommand,
+    tagCommand: isTagCommand,
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
+    popCommand: isPopCommand,
+    pushCommand: isPushCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
     connectToken: isConnectGit ? positional[0] : null,
+    stashIndex: isPopCommand ? positional[1] ?? null : null,
+    pushRemote: isPushCommand ? positional[1] ?? null : null,
+    pushBranch: isPushCommand ? positional[2] ?? null : null,
     commitRef:
       isInstallHook ||
       isConnectGit ||
@@ -293,9 +329,12 @@ export function parseArgs(argv) {
       isStatusCommand ||
       isCommitCommand ||
       isMergeCommand ||
+      isTagCommand ||
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
+      isPopCommand ||
+      isPushCommand ||
       subcommand === "help"
         ? null
         : positional[0] ?? null,
@@ -316,7 +355,8 @@ export function parseArgs(argv) {
     dryRun: flags.has("--dry-run"),
     log: flags.has("--log"),
     status: flags.has("--status"),
-    merge: flags.has("--merge")
+    merge: flags.has("--merge"),
+    tag: flags.has("--tag")
   };
 }
 
@@ -346,8 +386,9 @@ async function chooseModeInteractively() {
       "8. Security Review",
       "9. Split Commit",
       "10. Merge To Release Branch",
-      "11. Repository Log",
-      "12. Commit Working Tree",
+      "11. Tag Release Commits",
+      "12. Repository Log",
+      "13. Commit Working Tree",
       "> "
     ].join("\n")
   );
@@ -363,8 +404,9 @@ async function chooseModeInteractively() {
     "8": "security",
     "9": "split",
     "10": "merge",
-    "11": "log",
-    "12": "commit"
+    "11": "tag",
+    "12": "log",
+    "13": "commit"
   };
 
   return selections[answer] ?? "full";
@@ -497,9 +539,11 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand) {
-    if (parsed.actionPaths.length === 0) {
-      throw new Error(`No paths provided for "${parsed.subcommand}".`);
+  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand || parsed.pushCommand) {
+    if (!parsed.popCommand && parsed.actionPaths.length === 0) {
+      if (!parsed.pushCommand) {
+        throw new Error(`No paths provided for "${parsed.subcommand}".`);
+      }
     }
 
     if (parsed.addCommand) {
@@ -514,8 +558,23 @@ export async function main(argv = process.argv) {
       return 0;
     }
 
-    deletePaths(parsed.actionPaths, cwd);
-    console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+    if (parsed.deleteCommand) {
+      deletePaths(parsed.actionPaths, cwd);
+      console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+      return 0;
+    }
+
+    if (parsed.popCommand) {
+      const stashRef = resolveStashRef(parsed.stashIndex);
+      gitStashPop(parsed.stashIndex, cwd);
+      console.log(`Popped ${stashRef}.`);
+      return 0;
+    }
+
+    gitPush(cwd, parsed.pushRemote, parsed.pushBranch);
+    console.log(
+      `Pushed${parsed.pushRemote ? ` to ${parsed.pushRemote}` : ""}${parsed.pushBranch ? ` ${parsed.pushBranch}` : ""}.`
+    );
     return 0;
   }
 
@@ -599,6 +658,38 @@ export async function main(argv = process.argv) {
       console.log(`\nRelease promotion complete. Created ${plan.windows.length} release commit(s) on ${plan.releaseBranch}.`);
     } else {
       console.log(`\nThis is a preview. Run with --execute to create release commits on ${plan.releaseBranch}.`);
+    }
+
+    return 0;
+  }
+
+  if (mode === "tag" || parsed.tagCommand || parsed.tag) {
+    if (parsed.commitRef) {
+      throw new Error("--tag works from the current branch and does not accept a commit ref.");
+    }
+
+    const plan = finalizeReleaseTagPlan(buildReleaseTagPlan(cwd));
+
+    if (plan.tags.length === 0) {
+      console.log("No unreleased release tags detected. Nothing to tag.");
+      return 0;
+    }
+
+    console.log(formatReleaseTagPlan(plan));
+
+    if (parsed.execute && !parsed.dryRun) {
+      const confirmed = await askQuestion(
+        `\nThis will create ${plan.tags.length} release tag(s). Continue? (yes/no) > `
+      );
+      if (confirmed.toLowerCase() !== "yes") {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      executeReleaseTagPlan(plan, cwd);
+      console.log(`\nRelease tagging complete. Created ${plan.tags.length} release tag(s).`);
+    } else {
+      console.log("\nThis is a preview. Run with --execute to create release tags.");
     }
 
     return 0;

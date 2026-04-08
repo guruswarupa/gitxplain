@@ -67,6 +67,23 @@ test("parseArgs handles merge subcommand", () => {
   assert.equal(parsed.mode, null);
 });
 
+test("parseArgs handles tag flag execution", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--tag", "--execute"]);
+
+  assert.equal(parsed.mode, "tag");
+  assert.equal(parsed.tag, true);
+  assert.equal(parsed.execute, true);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles tag subcommand", () => {
+  const parsed = parseArgs(["node", "gitxplain", "tag"]);
+
+  assert.equal(parsed.tagCommand, true);
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.mode, null);
+});
+
 test("parseArgs handles repository log subcommand", () => {
   const parsed = parseArgs(["node", "gitxplain", "log"]);
 
@@ -124,6 +141,31 @@ test("parseArgs handles del command", () => {
 
   assert.equal(parsed.deleteCommand, true);
   assert.deepEqual(parsed.actionPaths, ["scratch.txt"]);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles pop command with numeric stash index", () => {
+  const parsed = parseArgs(["node", "gitxplain", "pop", "2"]);
+
+  assert.equal(parsed.popCommand, true);
+  assert.equal(parsed.stashIndex, "2");
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles pop command without an explicit stash index", () => {
+  const parsed = parseArgs(["node", "gitxplain", "pop"]);
+
+  assert.equal(parsed.popCommand, true);
+  assert.equal(parsed.stashIndex, null);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles push command with optional remote and branch", () => {
+  const parsed = parseArgs(["node", "gitxplain", "push", "origin", "main"]);
+
+  assert.equal(parsed.pushCommand, true);
+  assert.equal(parsed.pushRemote, "origin");
+  assert.equal(parsed.pushBranch, "main");
   assert.equal(parsed.commitRef, null);
 });
 

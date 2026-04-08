@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchCommitData, getRepositoryLog, getRepositoryStatus, resolveTreeSha } from "../cli/services/gitService.js";
+import {
+  fetchCommitData,
+  gitPush,
+  getRepositoryLog,
+  getRepositoryStatus,
+  resolveStashRef,
+  resolveTreeSha
+} from "../cli/services/gitService.js";
 
 test("fetchCommitData reads a single commit", () => {
   const responses = new Map([
@@ -97,4 +104,29 @@ test("resolveTreeSha resolves the tree object for a ref", () => {
 
   assert.equal(treeSha, "tree123");
   assert.deepEqual(calls, ["rev-parse HEAD^{tree}"]);
+});
+
+test("gitPush runs plain git push with optional remote and branch", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "";
+  };
+
+  assert.equal(gitPush("/tmp", null, null, runner), "");
+  assert.equal(gitPush("/tmp", "origin", "main", runner), "");
+
+  assert.deepEqual(calls, ["push", "push origin main"]);
+});
+
+test("resolveStashRef converts plain indexes into stash refs", () => {
+  assert.equal(resolveStashRef(), "stash@{0}");
+  assert.equal(resolveStashRef("2"), "stash@{2}");
+  assert.equal(resolveStashRef(5), "stash@{5}");
+  assert.equal(resolveStashRef("stash@{3}"), "stash@{3}");
+});
+
+test("resolveStashRef rejects invalid stash indexes", () => {
+  assert.throws(() => resolveStashRef("-1"), /Invalid stash index/);
+  assert.throws(() => resolveStashRef("abc"), /Invalid stash index/);
 });

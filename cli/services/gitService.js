@@ -198,6 +198,36 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function gitPush(cwd, remote = null, branch = null, runner = runGitCommand) {
+  const args = ["push"];
+
+  if (remote) {
+    args.push(remote);
+  }
+
+  if (branch) {
+    args.push(branch);
+  }
+
+  return runner(args, cwd);
+}
+
+export function gitCreateAnnotatedTag(tagName, ref, message, cwd) {
+  return runGitCommand(["tag", "-a", tagName, ref, "-m", message], cwd);
+}
+
+export function gitDeleteTag(tagName, cwd) {
+  return runGitCommand(["tag", "-d", tagName], cwd);
+}
+
+export function listTags(cwd) {
+  const output = runGitCommand(["tag", "--list"], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function hasStagedChanges(cwd) {
   const result = runGitCommandUnchecked(["diff", "--cached", "--quiet"], cwd);
 
@@ -337,6 +367,14 @@ export function listBranchCommits(ref, cwd) {
     .filter(Boolean);
 }
 
+export function listFilesInRef(ref, cwd) {
+  const output = runGitCommand(["ls-tree", "-r", "--name-only", ref], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   const result = runGitCommandUnchecked(["merge-base", "--is-ancestor", ancestorRef, descendantRef], cwd);
 
@@ -426,6 +464,28 @@ export function gitStashApply(stashRef, cwd) {
 
 export function gitStashDrop(stashRef, cwd) {
   return runGitCommand(["stash", "drop", stashRef], cwd);
+}
+
+export function resolveStashRef(index = null) {
+  if (index == null) {
+    return "stash@{0}";
+  }
+
+  if (typeof index === "string" && /^stash@\{\d+\}$/.test(index.trim())) {
+    return index.trim();
+  }
+
+  const parsed = Number.parseInt(String(index), 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid stash index: ${index}`);
+  }
+
+  return `stash@{${parsed}}`;
+}
+
+export function gitStashPop(index, cwd) {
+  const stashRef = resolveStashRef(index);
+  return runGitCommand(["stash", "pop", "--index", stashRef], cwd);
 }
 
 export function getLatestStashRef(cwd) {

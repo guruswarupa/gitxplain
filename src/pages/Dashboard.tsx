@@ -55,7 +55,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">DevInsight Dashboard</h1>
+        <h1 className="text-3xl font-bold mb-2">gitxplain Dashboard</h1>
         <p className="text-muted-foreground">Monitor your development environment and code quality</p>
       </div>
 

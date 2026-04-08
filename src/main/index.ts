@@ -306,6 +306,65 @@ ipcMain.handle('git-current-branch', async (event, repoPath) => {
   }
 });
 
+// List local branches and current branch
+ipcMain.handle('git-list-branches', async (event, repoPath) => {
+  try {
+    const git = simpleGit(repoPath);
+    await git.fetch(['--all', '--prune']);
+    const branchInfo = await git.branchLocal();
+    const allBranchInfo = await git.branch(['-a']);
+
+    const remoteOnlyBranches = allBranchInfo.all
+      .filter((name) => name.startsWith('remotes/origin/'))
+      .filter((name) => !name.includes('HEAD ->'))
+      .map((name) => name.replace(/^remotes\/origin\//, ''))
+      .filter((name) => name && !branchInfo.all.includes(name));
+
+    const mergedBranches = [...new Set([...branchInfo.all, ...remoteOnlyBranches])].sort((left, right) => {
+      if (left === branchInfo.current) return -1;
+      if (right === branchInfo.current) return 1;
+      return left.localeCompare(right);
+    });
+
+    return {
+      current: branchInfo.current,
+      all: mergedBranches,
+    };
+  } catch (error: any) {
+    console.error('Git list branches error:', error);
+    throw new Error(`Failed to list branches: ${error.message}`);
+  }
+});
+
+// Checkout branch
+ipcMain.handle('git-checkout-branch', async (event, { repoPath, branchName }) => {
+  try {
+    const git = simpleGit(repoPath);
+    const targetBranch = String(branchName || '').trim();
+    if (!targetBranch) {
+      throw new Error('Branch name is required');
+    }
+
+    const localBranches = await git.branchLocal();
+    if (localBranches.all.includes(targetBranch)) {
+      await git.checkout(targetBranch);
+    } else {
+      const remoteBranch = `origin/${targetBranch}`;
+      try {
+        await git.checkout(['--track', remoteBranch]);
+      } catch {
+        await git.checkout(targetBranch);
+      }
+    }
+
+    const branchInfo = await git.branchLocal();
+    return branchInfo.current;
+  } catch (error: any) {
+    console.error('Git checkout error:', error);
+    throw new Error(`Failed to checkout branch: ${error.message}`);
+  }
+});
+
 // Push current branch to origin
 ipcMain.handle('git-push-current-branch', async (event, repoPath) => {
   try {

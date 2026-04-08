@@ -3,8 +3,8 @@
  * Displays commit list with details panel and AI explanation
  */
 
-import React, { useState } from 'react';
-import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2, Scissors, Upload } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2, Scissors, Upload, GitBranch } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { Commit } from '../models';
 import SearchBar from '../components/SearchBar';
@@ -291,6 +291,58 @@ export default function HistoryView() {
   const [pushLoading, setPushLoading] = useState(false);
   const [pushError, setPushError] = useState<string>('');
   const [pushSuccessMessage, setPushSuccessMessage] = useState<string>('');
+  const [pushSuccessVisible, setPushSuccessVisible] = useState(false);
+  const [currentBranch, setCurrentBranch] = useState<string>('');
+  const [branches, setBranches] = useState<string[]>([]);
+  const [branchLoading, setBranchLoading] = useState(false);
+
+  const loadBranchData = async () => {
+    if (!currentProject) return;
+
+    setBranchLoading(true);
+    try {
+      const branchData = await window.electronAPI.listBranches(currentProject.path);
+      setCurrentBranch(branchData.current || '');
+      setBranches(branchData.all || []);
+    } catch (error: any) {
+      const message = String(error?.message || 'Failed to load branch information.');
+      if (message.includes('No handler registered for') && message.includes('git-list-branches')) {
+        setPushError('Branch controls need an app restart to load. Please restart the Electron app and try again.');
+      } else {
+        setPushError(message);
+      }
+    } finally {
+      setBranchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setPushError('');
+    setPushSuccessMessage('');
+    loadBranchData();
+  }, [currentProject?.path]);
+
+  useEffect(() => {
+    if (!pushSuccessMessage) {
+      setPushSuccessVisible(false);
+      return;
+    }
+
+    setPushSuccessVisible(true);
+
+    const fadeTimer = setTimeout(() => {
+      setPushSuccessVisible(false);
+    }, 4500);
+
+    const clearTimer = setTimeout(() => {
+      setPushSuccessMessage('');
+    }, 5000);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [pushSuccessMessage]);
 
   const getProviderHelpMessage = (modeLabel: string) =>
     `Unable to run ${modeLabel}. Check your active AI provider and API key in Settings, then try again.`;
@@ -471,6 +523,30 @@ export default function HistoryView() {
     }
   };
 
+  const handleBranchChange = async (branchName: string) => {
+    if (!currentProject || !branchName || branchName === currentBranch) return;
+
+    setBranchLoading(true);
+    setPushError('');
+    setPushSuccessMessage('');
+
+    try {
+      const switchedTo = await window.electronAPI.checkoutBranch(currentProject.path, branchName);
+      setCurrentBranch(switchedTo);
+      setPushSuccessMessage(`Switched to branch "${switchedTo}".`);
+
+      const refreshedCommits = await window.electronAPI.getLog(currentProject.path, { maxCount: 500 });
+      setCommits(refreshedCommits);
+      setSelectedCommit(null);
+
+      await loadBranchData();
+    } catch (error: any) {
+      setPushError(error.message || 'Failed to switch branch.');
+    } finally {
+      setBranchLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -578,10 +654,49 @@ export default function HistoryView() {
       {/* Commit Details Panel */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 border-b border-border bg-card/50">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-3 flex-wrap">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-background">
+              <GitBranch className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Branch</span>
+              <select
+                value={currentBranch}
+                onChange={(e) => handleBranchChange(e.target.value)}
+                disabled={branchLoading || branches.length === 0}
+                className="bg-background text-foreground text-sm font-medium focus:outline-none disabled:opacity-50 rounded px-2 py-1 border border-border"
+                style={{
+                  color: 'hsl(var(--foreground))',
+                  backgroundColor: 'hsl(var(--background))',
+                }}
+              >
+                {branches.length === 0 ? (
+                  <option
+                    value=""
+                    style={{
+                      color: 'hsl(var(--foreground))',
+                      backgroundColor: 'hsl(var(--background))',
+                    }}
+                  >
+                    {branchLoading ? 'Loading...' : 'No branches'}
+                  </option>
+                ) : (
+                  branches.map((branch) => (
+                    <option
+                      key={branch}
+                      value={branch}
+                      style={{
+                        color: 'hsl(var(--foreground))',
+                        backgroundColor: 'hsl(var(--background))',
+                      }}
+                    >
+                      {branch}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
             <button
               onClick={handlePushAfterSplit}
-              disabled={pushLoading}
+              disabled={pushLoading || branchLoading || !currentBranch}
               className="flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 border border-border hover:bg-accent"
             >
               <Upload className="w-4 h-4" />
@@ -589,7 +704,7 @@ export default function HistoryView() {
             </button>
           </div>
           {(pushError || pushSuccessMessage) && (
-            <div className={`mt-3 p-3 rounded-md border text-sm ${pushError ? 'border-red-500/40 bg-red-500/10 text-red-700' : 'border-green-500/40 bg-green-500/10 text-green-700'}`}>
+            <div className={`mt-3 p-3 rounded-md border text-sm transition-opacity duration-500 ${pushError ? 'border-red-500/40 bg-red-500/10 text-red-700 opacity-100' : `border-green-500/40 bg-green-500/10 text-green-700 ${pushSuccessVisible ? 'opacity-100' : 'opacity-0'}`}`}>
               {pushError || pushSuccessMessage}
             </div>
           )}

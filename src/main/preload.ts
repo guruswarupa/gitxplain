@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pushCurrentBranch: (path: string) => ipcRenderer.invoke('git-push-current-branch', path),
   isRepo: (path: string) => ipcRenderer.invoke('git-is-repo', path),
   getCurrentBranch: (path: string) => ipcRenderer.invoke('git-current-branch', path),
+  listBranches: (path: string) => ipcRenderer.invoke('git-list-branches', path),
+  checkoutBranch: (path: string, branchName: string) =>
+    ipcRenderer.invoke('git-checkout-branch', { repoPath: path, branchName }),
   
   // Store operations
   storeGet: (key: string) => ipcRenderer.invoke('store-get', key),

@@ -3,7 +3,7 @@
  * Configure AI providers, API keys, and app preferences
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Key, Cpu, Check, AlertCircle, Eye, EyeOff, Save, X, ChevronDown } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 
@@ -52,6 +52,18 @@ function getDefaultModel(provider: ProviderId): string {
   return PROVIDERS.find(p => p.id === provider)?.models[0] || '';
 }
 
+function getProviderModels(provider: ProviderId): string[] {
+  return PROVIDERS.find((p) => p.id === provider)?.models || [];
+}
+
+function normalizeModelForProvider(provider: ProviderId, model: string): string {
+  const trimmedModel = String(model || '').trim();
+  const providerModels = getProviderModels(provider);
+  if (providerModels.length === 0) return trimmedModel;
+  if (providerModels.includes(trimmedModel)) return trimmedModel;
+  return providerModels[0];
+}
+
 function isProviderConfigured(settings: AISettings, provider: ProviderId): boolean {
   if (provider === 'ollama') {
     return Boolean(settings.ollamaBaseUrl.trim());
@@ -65,7 +77,10 @@ function alignProviderWithConfiguredKey(settings: AISettings): AISettings {
   const preferredProviders: ProviderId[] = ['openai', 'groq', 'openrouter', 'gemini', 'chutes', 'ollama'];
 
   if (isProviderConfigured(settings, selectedProvider)) {
-    return settings;
+    return {
+      ...settings,
+      model: normalizeModelForProvider(selectedProvider, settings.model),
+    };
   }
 
   const fallbackProvider = preferredProviders.find((provider) => isProviderConfigured(settings, provider));
@@ -76,7 +91,7 @@ function alignProviderWithConfiguredKey(settings: AISettings): AISettings {
   return {
     ...settings,
     provider: fallbackProvider,
-    model: getDefaultModel(fallbackProvider),
+    model: normalizeModelForProvider(fallbackProvider, settings.model || getDefaultModel(fallbackProvider)),
   };
 }
 
@@ -91,10 +106,25 @@ export default function SettingsView() {
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [installingHook, setInstallingHook] = useState(false);
   const [hookStatus, setHookStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const hasHydrated = useRef(false);
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (loading || !hasHydrated.current) {
+      return;
+    }
+
+    const persistTimer = setTimeout(() => {
+      persistSettings(settings, githubToken).catch((error) => {
+        console.error('Failed to auto-persist settings:', error);
+      });
+    }, 300);
+
+    return () => clearTimeout(persistTimer);
+  }, [settings, githubToken, loading]);
 
   const loadSettings = async () => {
     try {
@@ -110,6 +140,7 @@ export default function SettingsView() {
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
+      hasHydrated.current = true;
       setLoading(false);
     }
   };
@@ -130,6 +161,7 @@ export default function SettingsView() {
     try {
       const sanitizedSettings: AISettings = {
         ...settings,
+        model: normalizeModelForProvider(settings.provider as ProviderId, settings.model),
         openaiKey: settings.openaiKey.trim(),
         groqKey: settings.groqKey.trim(),
         openrouterKey: settings.openrouterKey.trim(),

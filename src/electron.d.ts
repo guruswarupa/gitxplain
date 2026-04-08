@@ -37,6 +37,11 @@ export interface GitxplainResult {
   error?: string;
 }
 
+export interface GitBranchList {
+  current: string;
+  all: string[];
+}
+
 export interface GitHubRepo {
   id: number;
   name: string;
@@ -59,6 +64,8 @@ export interface ElectronAPI {
   pushCurrentBranch: (path: string) => Promise<string>;
   isRepo: (path: string) => Promise<boolean>;
   getCurrentBranch: (path: string) => Promise<string>;
+  listBranches: (path: string) => Promise<GitBranchList>;
+  checkoutBranch: (path: string, branchName: string) => Promise<string>;
   
   // Store operations
   storeGet: (key: string) => Promise<any>;

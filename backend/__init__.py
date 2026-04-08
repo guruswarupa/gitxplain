@@ -1,1 +1,1 @@
-"""Backend package for DevInsight."""
+"""Backend package for gitxplain."""

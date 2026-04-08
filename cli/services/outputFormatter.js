@@ -11,7 +11,15 @@ const ANSI = {
 };
 
 function supportsColor() {
-  return Boolean(process.stdout?.isTTY) && process.env.NO_COLOR == null;
+  if (process.env.FORCE_COLOR != null && process.env.FORCE_COLOR !== "0") {
+    return true;
+  }
+
+  if (process.env.NO_COLOR != null) {
+    return false;
+  }
+
+  return Boolean(process.stdout?.isTTY);
 }
 
 function colorize(text, color) {
@@ -22,35 +30,233 @@ function colorize(text, color) {
   return `${color}${text}${ANSI.reset}`;
 }
 
+function stripInlineMarkdown(text) {
+  return text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .trimEnd();
+}
+
+function normalizeMarkdownLine(line, state) {
+  const trimmed = line.trim();
+
+  if (/^```/.test(trimmed)) {
+    state.inCodeBlock = !state.inCodeBlock;
+    return "";
+  }
+
+  if (state.inCodeBlock) {
+    return `  ${line.replace(/^\s*/, "")}`;
+  }
+
+  if (/^---+$/.test(trimmed) || /^\*\*\*+$/.test(trimmed)) {
+    return "";
+  }
+
+  let normalizedHeading = trimmed
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^([0-9]+\.)\s+/, "");
+  normalizedHeading = stripInlineMarkdown(normalizedHeading).replace(/:\s*$/, "").trim();
+
+  if (
+    /^(summary|issues? fixed|issue|root cause|fix(?: explanation)?|impact|risk level|severity|technical breakdown|full analysis|line-by-line code walkthrough|code review|security review|security findings|review findings|suggestions|recommended mitigations)$/i.test(
+      normalizedHeading
+    )
+  ) {
+    return `${normalizedHeading}:`;
+  }
+
+  if (/^>\s*/.test(trimmed)) {
+    return stripInlineMarkdown(trimmed.replace(/^>\s*/, ""));
+  }
+
+  const bulletMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+  if (bulletMatch) {
+    const [, indent, marker, content] = bulletMatch;
+    return `${indent}${marker} ${stripInlineMarkdown(content)}`;
+  }
+
+  return stripInlineMarkdown(line);
+}
+
 function formatTargetLabel(commitData) {
   return commitData.analysisType === "range" ? "Range" : "Commit";
 }
 
-function highlightLine(line) {
-  if (/^([0-9]+\.)?\s*(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Security Findings|Suggestions|Review Findings):/i.test(line)) {
-    return colorize(line, ANSI.bold + ANSI.cyan);
+function normalizeHeading(line) {
+  const match = line.match(/^([0-9]+\.)?\s*(Summary|Issues? Fixed|Issue|Root Cause|Fix(?: Explanation)?|Impact|Risk Level|Severity|Technical Breakdown|Full Analysis|Line-by-Line Code Walkthrough|Code Review|Security Review|Security Findings|Review Findings|Suggestions|Recommended Mitigations)\s*:?\s*$/i);
+
+  if (!match) {
+    return null;
   }
 
-  if (/risk/i.test(line) && /\blow\b/i.test(line)) {
+  return `${match[2]}:`;
+}
+
+function isFileHeading(line) {
+  return /^(?:File|Path)\s*:/i.test(line) || /^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:\s*$/.test(line);
+}
+
+function classifyTone(line) {
+  if (/^\s*low(?:\b|[.:])/i.test(line)) {
+    return "good";
+  }
+
+  if (/^\s*medium(?:\b|[.:])/i.test(line)) {
+    return "neutral";
+  }
+
+  if (/^\s*high(?:\b|[.:])/i.test(line)) {
+    return "bad";
+  }
+
+  if (
+    /\b(no significant findings|no security findings|none apparent|looks good|safe|improved|improvement|fixed|resolved|successful|passes?|low risk|low severity)\b/i.test(
+      line
+    )
+  ) {
+    return "good";
+  }
+
+  if (
+    /\b(issue|issues|bug|broken|failure|failing|risk|risky|severity|vulnerability|insecure|regression|warning|problem|bad|missing|error|high risk|high severity)\b/i.test(
+      line
+    )
+  ) {
+    return "bad";
+  }
+
+  if (/\b(suggestion|consider|follow-up|todo|medium risk|medium severity)\b/i.test(line)) {
+    return "neutral";
+  }
+
+  return null;
+}
+
+function colorizeByTone(line, tone) {
+  if (tone === "good") {
     return colorize(line, ANSI.green);
   }
 
-  if (/risk/i.test(line) && /\bmedium\b/i.test(line)) {
-    return colorize(line, ANSI.yellow);
+  if (tone === "bad") {
+    return colorize(line, ANSI.red);
   }
 
-  if (/risk/i.test(line) && /\bhigh\b/i.test(line)) {
-    return colorize(line, ANSI.red);
+  if (tone === "neutral") {
+    return colorize(line, ANSI.yellow);
   }
 
   return line;
 }
 
+function formatBulletLine(line) {
+  const match = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, indent, marker, content] = match;
+  const tone = classifyTone(content);
+  const coloredMarker =
+    tone === "good"
+      ? colorize(marker, ANSI.green)
+      : tone === "bad"
+        ? colorize(marker, ANSI.red)
+        : tone === "neutral"
+          ? colorize(marker, ANSI.yellow)
+          : colorize(marker, ANSI.cyan);
+
+  return `${indent}${coloredMarker} ${colorizeByTone(content, tone)}`;
+}
+
+function formatSeverityLine(line) {
+  if (/\brisk level\b|\bseverity\b/i.test(line) === false) {
+    return null;
+  }
+
+  if (/\blow\b/i.test(line)) {
+    return colorize(line, ANSI.green);
+  }
+
+  if (/\bmedium\b/i.test(line)) {
+    return colorize(line, ANSI.yellow);
+  }
+
+  if (/\bhigh\b/i.test(line)) {
+    return colorize(line, ANSI.red);
+  }
+
+  return colorize(line, ANSI.bold + ANSI.yellow);
+}
+
+function formatLine(line) {
+  const trimmed = line.trim();
+
+  if (trimmed === "") {
+    return "";
+  }
+
+  const normalizedHeading = normalizeHeading(trimmed);
+
+  if (normalizedHeading) {
+    return colorize(normalizedHeading, ANSI.bold + ANSI.cyan);
+  }
+
+  if (isFileHeading(trimmed)) {
+    return colorize(trimmed, ANSI.bold + ANSI.cyan);
+  }
+
+  const bulletLine = formatBulletLine(line);
+
+  if (bulletLine) {
+    return bulletLine;
+  }
+
+  const severityLine = formatSeverityLine(trimmed);
+
+  if (severityLine) {
+    return severityLine;
+  }
+
+  return colorizeByTone(line, classifyTone(line));
+}
+
 function formatExplanation(explanation) {
-  return explanation
+  const state = { inCodeBlock: false };
+  const lines = explanation
+    .replaceAll("\r\n", "\n")
     .split("\n")
-    .map((line) => highlightLine(line))
-    .join("\n");
+    .map((line) => normalizeMarkdownLine(line, state));
+  const formatted = [];
+  let previousWasBlank = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const formattedLine = formatLine(line);
+    const isHeading = normalizeHeading(trimmed) != null || isFileHeading(trimmed);
+
+    if (trimmed === "") {
+      if (!previousWasBlank && formatted.length > 0) {
+        formatted.push("");
+      }
+      previousWasBlank = true;
+      continue;
+    }
+
+    if (isHeading && formatted.length > 0 && !previousWasBlank) {
+      formatted.push("");
+    }
+
+    formatted.push(formattedLine);
+    previousWasBlank = false;
+  }
+
+  return formatted.join("\n").trimEnd();
 }
 
 export function formatPreamble({ mode, commitData, options, promptMeta }) {

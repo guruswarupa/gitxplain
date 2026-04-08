@@ -13,6 +13,26 @@ export function runGitCommand(args, cwd) {
   }
 }
 
+export function runGitCommandUnchecked(args, cwd) {
+  try {
+    return {
+      stdout: execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      }).trim(),
+      stderr: "",
+      exitCode: 0
+    };
+  } catch (error) {
+    return {
+      stdout: error.stdout?.toString().trim() ?? "",
+      stderr: error.stderr?.toString().trim() ?? "",
+      exitCode: error.status ?? 1
+    };
+  }
+}
+
 export function isGitRepository(cwd) {
   try {
     return runGitCommand(["rev-parse", "--is-inside-work-tree"], cwd) === "true";
@@ -74,6 +94,40 @@ export function getDefaultBaseRef(cwd) {
 export function buildBranchRange(baseRef, cwd) {
   const mergeBase = runGitCommand(["merge-base", baseRef, "HEAD"], cwd);
   return `${mergeBase}..HEAD`;
+}
+
+export function isWorkingTreeClean(cwd) {
+  const result = runGitCommandUnchecked(["status", "--porcelain"], cwd);
+
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || "Unable to determine working tree status.");
+  }
+
+  return result.stdout === "";
+}
+
+export function resolveCommitSha(ref, cwd) {
+  return runGitCommand(["rev-parse", ref], cwd);
+}
+
+export function getCurrentHeadSha(cwd) {
+  return runGitCommand(["rev-parse", "HEAD"], cwd);
+}
+
+export function gitResetSoft(cwd) {
+  return runGitCommand(["reset", "--soft", "HEAD~1"], cwd);
+}
+
+export function gitUnstageAll(cwd) {
+  return runGitCommand(["reset", "HEAD", "--", "."], cwd);
+}
+
+export function gitAddFiles(files, cwd) {
+  return runGitCommand(["add", ...files], cwd);
+}
+
+export function gitCommit(message, cwd) {
+  return runGitCommand(["commit", "-m", message], cwd);
 }
 
 function fetchSingleCommitData(commitId, cwd, runner) {

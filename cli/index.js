@@ -10,6 +10,7 @@ import { loadConfig } from "./services/configService.js";
 import {
   buildBranchRange,
   fetchCommitData,
+  getRepositoryLog,
   getDefaultBaseRef,
   isGitRepository
 } from "./services/gitService.js";
@@ -33,7 +34,8 @@ const MODE_FLAGS = new Map([
   ["--lines", "lines"],
   ["--review", "review"],
   ["--security", "security"],
-  ["--split", "split"]
+  ["--split", "split"],
+  ["--log", "log"]
 ]);
 
 const FORMAT_FLAGS = new Map([
@@ -48,6 +50,8 @@ function printHelp() {
 Usage:
   gitxplain help
   gitxplain --help
+  gitxplain log
+  gitxplain --log
   gitxplain install-hook [hook-name]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
@@ -64,6 +68,7 @@ Modes:
   --review     Generate a code review with risks and suggestions
   --security   Focus on security risks introduced by the change
   --split      Propose splitting a commit into multiple atomic commits
+  --log        Print recent Git log entries for the current repository
   --execute    Execute the proposed split (rewrites git history)
   --dry-run    Show the split plan without executing (default for --split)
 
@@ -92,6 +97,8 @@ Examples:
   gitxplain HEAD~5..HEAD --markdown
   gitxplain --branch main --review
   gitxplain --pr origin/main --security --stream
+  gitxplain log
+  gitxplain --log
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -193,13 +200,15 @@ export function parseArgs(argv) {
   const explicitMode = [...MODE_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const explicitFormat = [...FORMAT_FLAGS.entries()].find(([flag]) => flags.has(flag))?.[1] ?? null;
   const isInstallHook = subcommand === "install-hook";
+  const isLogCommand = subcommand === "log";
 
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
     installHook: isInstallHook,
+    logCommand: isLogCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
-    commitRef: isInstallHook || subcommand === "help" ? null : positional[0] ?? null,
+    commitRef: isInstallHook || isLogCommand || subcommand === "help" ? null : positional[0] ?? null,
     mode: explicitMode,
     format: explicitFormat,
     provider: getFlagValue(args, "--provider"),
@@ -214,7 +223,8 @@ export function parseArgs(argv) {
     verbose: flags.has("--verbose"),
     quiet: flags.has("--quiet"),
     execute: flags.has("--execute"),
-    dryRun: flags.has("--dry-run")
+    dryRun: flags.has("--dry-run"),
+    log: flags.has("--log")
   };
 }
 
@@ -243,6 +253,7 @@ async function chooseModeInteractively() {
       "7. Code Review",
       "8. Security Review",
       "9. Split Commit",
+      "10. Repository Log",
       "> "
     ].join("\n")
   );
@@ -256,7 +267,8 @@ async function chooseModeInteractively() {
     "6": "lines",
     "7": "review",
     "8": "security",
-    "9": "split"
+    "9": "split",
+    "10": "log"
   };
 
   return selections[answer] ?? "full";
@@ -330,6 +342,11 @@ export async function main(argv = process.argv) {
   if (parsed.installHook) {
     const hookPath = installHook({ cwd, hookName: parsed.hookName });
     console.log(`Installed ${parsed.hookName} hook at ${hookPath}`);
+    return 0;
+  }
+
+  if (parsed.logCommand || parsed.log) {
+    console.log(getRepositoryLog(cwd));
     return 0;
   }
 

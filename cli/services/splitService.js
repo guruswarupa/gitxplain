@@ -434,8 +434,7 @@ export function executeSplit(plan, commitId, cwd) {
         finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenHeadSha, cwd);
       } else {
         if (originalBranch !== "HEAD") {
-          gitForceBranch(originalBranch, rewrittenHeadSha, cwd);
-          gitCheckout(originalBranch, cwd);
+          gitResetHard(rewrittenHeadSha, cwd);
         } else {
           gitCheckoutDetached(rewrittenHeadSha, cwd);
         }

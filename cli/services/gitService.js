@@ -429,6 +429,10 @@ export function gitCheckout(ref, cwd) {
   return runGitCommand(["checkout", ref], cwd);
 }
 
+export function gitCheckoutDetached(ref, cwd) {
+  return runGitCommand(["checkout", "--detach", ref], cwd);
+}
+
 export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
   return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
 }
@@ -439,6 +443,10 @@ export function gitCheckoutOrphan(branchName, cwd) {
 
 export function gitDeleteBranch(branchName, cwd) {
   return runGitCommand(["branch", "-D", branchName], cwd);
+}
+
+export function gitForceBranch(branchName, ref, cwd) {
+  return runGitCommand(["branch", "-f", branchName, ref], cwd);
 }
 
 export function gitRemoveCachedAll(cwd) {

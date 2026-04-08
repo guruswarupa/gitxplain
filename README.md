@@ -16,6 +16,7 @@ Supported providers:
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
+- Supports release-branch merge previews driven by detected version bumps in diffs
 - Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for recent history inspection
 - Supports single commits, commit ranges, and branch-vs-base comparisons
@@ -65,6 +66,8 @@ cp .env.example .env
 gitxplain help
 gitxplain commit
 gitxplain --commit
+gitxplain merge
+gitxplain --merge
 gitxplain log --log
 gitxplain <commit-id>
 gitxplain <commit-id> --summary
@@ -77,6 +80,8 @@ gitxplain <commit-id> --review
 gitxplain <commit-id> --security
 gitxplain <commit-id> --split
 gitxplain --commit --execute
+gitxplain merge
+gitxplain --merge --execute
 gitxplain <commit-id> --json
 gitxplain <commit-id> --markdown
 gitxplain <commit-id> --html
@@ -99,6 +104,7 @@ Examples:
 ```bash
 npm start -- HEAD~1 --summary
 npm start -- commit
+npm start -- merge
 npm start -- log --log
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
@@ -156,6 +162,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
 - `--split`: propose how to split a commit into multiple atomic commits
+- `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print recent Git log entries for the current repository
 - `--execute`: apply a proposed split by rewriting history
@@ -223,6 +230,23 @@ gitxplain HEAD --split --provider gemini
 `--split` asks the model for a plan first. By default this is a dry run and only prints the proposed commit breakdown. Adding `--execute` rewrites Git history by undoing the current `HEAD` commit and recreating it as multiple commits in the suggested order.
 
 Warning: `--split --execute` rewrites history. If the commit was already pushed, you may need to force-push after reviewing the new commit stack. For safety, execution only supports splitting the current `HEAD` commit and requires a clean working tree.
+
+## Release Merge
+
+Preview the release merge plan for the current branch:
+
+```bash
+gitxplain merge
+gitxplain --merge
+```
+
+Actually merge the current branch into the `release` branch:
+
+```bash
+gitxplain --merge --execute
+```
+
+This command looks at commits on your current branch that are not yet on `release`, detects semantic version bumps in their diffs, and only proceeds when release-version changes are found. On execution it checks out `release` or creates it from the default base branch, then creates a merge commit from your current branch into `release`.
 
 ## Commit Working Tree
 

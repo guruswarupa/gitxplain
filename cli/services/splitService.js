@@ -8,6 +8,7 @@ import {
   gitCherryPickAbort,
   gitCherryPickNoCommit,
   gitAddFiles,
+  gitCreateBranch,
   gitCheckout,
   gitCheckoutDetached,
   gitCheckoutOrphan,
@@ -15,6 +16,8 @@ import {
   gitDeleteBranch,
   gitForceBranch,
   gitRemoveCachedAll,
+  gitRebaseAbort,
+  gitRebaseRebaseMergesOnto,
   gitResetHard,
   gitUnstageAll,
   hasStagedChanges,
@@ -250,6 +253,10 @@ function createTempRootSplitBranchName() {
   return `gitxplain-split-root-${Date.now()}`;
 }
 
+function createTempReplayBranchName() {
+  return `gitxplain-split-replay-${Date.now()}`;
+}
+
 function restoreOriginalPointer(originalBranch, originalHeadSha, cwd) {
   if (originalBranch === "HEAD") {
     gitCheckoutDetached(originalHeadSha, cwd);
@@ -277,8 +284,10 @@ export function executeSplit(plan, commitId, cwd) {
   const originalHeadSha = currentHeadSha;
   const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
+  const originalBranch = getCurrentBranchName(cwd);
   let rootSplitTempBranch = null;
   let rootSplitOriginalBranch = null;
+  let replayTempBranch = null;
 
   try {
     if (!isWorkingTreeClean(cwd)) {
@@ -291,17 +300,10 @@ export function executeSplit(plan, commitId, cwd) {
     }
 
     const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
-
-    for (const replayCommit of commitsToReplay) {
-      if (getCommitParents(replayCommit, cwd).length !== 1) {
-        throw new Error(
-          "Automatic split currently supports linear history only. Rebase merge commits manually first."
-        );
-      }
-    }
+    replayTempBranch = createTempReplayBranchName();
+    gitCreateBranch(replayTempBranch, originalHeadSha, cwd);
 
     if (parentSha == null) {
-      const originalBranch = getCurrentBranchName(cwd);
       const tempBranch = createTempRootSplitBranchName();
       const originalHeadFiles = listFilesInRef("HEAD", cwd);
       rootSplitOriginalBranch = originalBranch;
@@ -324,40 +326,45 @@ export function executeSplit(plan, commitId, cwd) {
 
         gitCommit(commit.message, cwd);
       }
+    } else {
+      gitResetHard(parentSha, cwd);
+      gitCherryPickNoCommit(targetSha, cwd);
 
-      for (const replayCommit of commitsToReplay) {
-        gitCherryPick(replayCommit, cwd);
+      for (const commit of orderedCommits) {
+        gitUnstageAll(cwd);
+        gitAddFiles(commit.files, cwd);
+
+        if (!hasStagedChanges(cwd)) {
+          throw new Error(
+            `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
+          );
+        }
+
+        gitCommit(commit.message, cwd);
       }
-
-      const rewrittenHeadTreeSha = resolveTreeSha("HEAD", cwd);
-      if (rewrittenHeadTreeSha !== originalHeadTreeSha) {
-        throw new Error(
-          "Split verification failed: the rewritten HEAD tree does not match the original HEAD tree."
-        );
-      }
-
-      finalizeRootSplitBranch(tempBranch, originalBranch, getCurrentHeadSha(cwd), cwd);
-      return;
     }
 
-    gitResetHard(parentSha, cwd);
-    gitCherryPickNoCommit(targetSha, cwd);
+    const splitTipSha = getCurrentHeadSha(cwd);
 
-    for (const commit of orderedCommits) {
-      gitUnstageAll(cwd);
-      gitAddFiles(commit.files, cwd);
+    if (commitsToReplay.length > 0) {
+      gitCheckout(replayTempBranch, cwd);
+      gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd);
+      const rewrittenReplayHeadSha = getCurrentHeadSha(cwd);
 
-      if (!hasStagedChanges(cwd)) {
-        throw new Error(
-          `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
-        );
+      if (rootSplitTempBranch) {
+        finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenReplayHeadSha, cwd);
+      } else {
+        if (originalBranch !== "HEAD") {
+          gitForceBranch(originalBranch, rewrittenReplayHeadSha, cwd);
+          gitCheckout(originalBranch, cwd);
+        } else {
+          gitCheckoutDetached(rewrittenReplayHeadSha, cwd);
+        }
       }
-
-      gitCommit(commit.message, cwd);
-    }
-
-    for (const replayCommit of commitsToReplay) {
-      gitCherryPick(replayCommit, cwd);
+    } else if (rootSplitTempBranch) {
+      finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, splitTipSha, cwd);
+    } else if (originalBranch === "HEAD") {
+      gitCheckoutDetached(splitTipSha, cwd);
     }
 
     const rewrittenHeadTreeSha = resolveTreeSha("HEAD", cwd);
@@ -368,11 +375,14 @@ export function executeSplit(plan, commitId, cwd) {
     }
   } catch (error) {
     gitCherryPickAbort(cwd);
+    gitRebaseAbort(cwd);
 
     try {
       if (rootSplitTempBranch) {
         restoreOriginalPointer(rootSplitOriginalBranch ?? "HEAD", originalHeadSha, cwd);
         gitDeleteBranch(rootSplitTempBranch, cwd);
+      } else if (replayTempBranch) {
+        restoreOriginalPointer(originalBranch, originalHeadSha, cwd);
       } else {
         runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
       }
@@ -383,5 +393,16 @@ export function executeSplit(plan, commitId, cwd) {
     console.error(error.message);
     console.error(buildRecoveryMessage(originalHeadSha));
     throw new Error("Split execution aborted.");
+  } finally {
+    if (replayTempBranch) {
+      try {
+        const currentBranch = getCurrentBranchName(cwd);
+        if (currentBranch !== replayTempBranch) {
+          gitDeleteBranch(replayTempBranch, cwd);
+        }
+      } catch {
+        // Best-effort cleanup for the temporary replay branch.
+      }
+    }
   }
 }

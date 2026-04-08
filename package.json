@@ -1,6 +1,6 @@
 {
   "name": "gitxplain",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "AI-powered Git commit explainer CLI",
   "type": "module",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node ./cli/index.js",
-    "lint": "node --check ./cli/index.js && node --check ./cli/services/aiService.js && node --check ./cli/services/gitService.js && node --check ./cli/services/promptService.js && node --check ./cli/services/outputFormatter.js && node --check ./cli/services/gitConnectionService.js && node --check ./cli/services/chatService.js && node --check ./cli/services/envLoader.js"
+    "lint": "node --check ./cli/index.js && node --check ./cli/services/aiService.js && node --check ./cli/services/cacheService.js && node --check ./cli/services/clipboardService.js && node --check ./cli/services/commitService.js && node --check ./cli/services/configService.js && node --check ./cli/services/gitService.js && node --check ./cli/services/hookService.js && node --check ./cli/services/mergeService.js && node --check ./cli/services/promptService.js && node --check ./cli/services/outputFormatter.js && node --check ./cli/services/splitService.js",
+    "test": "node --test"
   },
   "keywords": [
     "git",
@@ -16,8 +17,5 @@
     "ai",
     "developer-tools"
   ],
-  "license": "MIT",
-  "dependencies": {
-    "gitxplain": "^0.1.0"
-  }
+  "license": "MIT"
 }

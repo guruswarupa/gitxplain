@@ -1,0 +1,32 @@
+appId: com.devinsight.app
+productName: DevInsight
+directories:
+  output: dist
+  buildResources: public
+files:
+  - dist/main.js
+  - dist/renderer/
+  - package.json
+  - node_modules/
+  - public/
+
+win:
+  target:
+    - nsis
+    - portable
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development

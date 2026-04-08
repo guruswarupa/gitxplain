@@ -139,6 +139,31 @@ function normalizeSplitPlan(plan) {
   };
 }
 
+function getPlanFiles(plan) {
+  return [...new Set(sortPlanCommits(plan).flatMap((commit) => commit.files))];
+}
+
+function summarizeFileKinds(files) {
+  if (files.every((file) => file.startsWith("test/") || file.endsWith(".test.js"))) {
+    return {
+      message: "test: include remaining test updates",
+      description: "Captures remaining test file changes that were not assigned to an earlier split group."
+    };
+  }
+
+  if (files.every((file) => file.startsWith("docs/") || file.toLowerCase() === "readme.md")) {
+    return {
+      message: "docs: include remaining documentation updates",
+      description: "Captures remaining documentation changes that were not assigned to an earlier split group."
+    };
+  }
+
+  return {
+    message: "chore: include remaining commit changes",
+    description: "Captures files from the original commit that were not assigned to an earlier split group."
+  };
+}
+
 export function parseSplitPlan(explanation) {
   let parsed;
 
@@ -170,6 +195,43 @@ export function parseSplitPlan(explanation) {
   parsed.commits.forEach(validateCommitEntry);
 
   return normalizeSplitPlan(parsed);
+}
+
+export function reconcileSplitPlan(plan, filesChanged) {
+  const commitFiles = [...new Set(filesChanged)];
+  const commitFileSet = new Set(commitFiles);
+  const plannedFiles = getPlanFiles(plan);
+  const extraFiles = plannedFiles.filter((file) => !commitFileSet.has(file));
+  const missingFiles = commitFiles.filter((file) => !plannedFiles.includes(file));
+  const warnings = [...(plan.warnings ?? [])];
+  let commits = sortPlanCommits(plan).map((commit) => ({ ...commit, files: [...commit.files] }));
+
+  if (extraFiles.length > 0) {
+    warnings.push(`Files not present in the target commit were removed from the split plan: ${extraFiles.join(", ")}.`);
+    commits = commits
+      .map((commit) => ({
+        ...commit,
+        files: commit.files.filter((file) => !extraFiles.includes(file))
+      }))
+      .filter((commit) => commit.files.length > 0);
+  }
+
+  if (missingFiles.length > 0) {
+    const fallback = summarizeFileKinds(missingFiles);
+    warnings.push(`Missing files were added to a final fallback split group: ${missingFiles.join(", ")}.`);
+    commits.push({
+      order: commits.length + 1,
+      message: fallback.message,
+      files: missingFiles,
+      description: fallback.description
+    });
+  }
+
+  return {
+    ...plan,
+    commits: commits.map((commit, index) => ({ ...commit, order: index + 1 })),
+    warnings
+  };
 }
 
 export function formatSplitPlan(plan) {

@@ -433,6 +433,10 @@ export function gitCheckoutDetached(ref, cwd) {
   return runGitCommand(["checkout", "--detach", ref], cwd);
 }
 
+export function gitCreateBranch(branchName, startPoint, cwd) {
+  return runGitCommand(["branch", branchName, startPoint], cwd);
+}
+
 export function gitCheckoutNewBranch(branchName, startPoint, cwd) {
   return runGitCommand(["checkout", "-b", branchName, startPoint], cwd);
 }
@@ -447,6 +451,15 @@ export function gitDeleteBranch(branchName, cwd) {
 
 export function gitForceBranch(branchName, ref, cwd) {
   return runGitCommand(["branch", "-f", branchName, ref], cwd);
+}
+
+export function gitRebaseRebaseMergesOnto(newBase, upstream, cwd) {
+  return runGitCommand(["rebase", "--rebase-merges", "--onto", newBase, upstream], cwd);
+}
+
+export function gitRebaseAbort(cwd) {
+  const result = runGitCommandUnchecked(["rebase", "--abort"], cwd);
+  return result.exitCode === 0;
 }
 
 export function gitRemoveCachedAll(cwd) {

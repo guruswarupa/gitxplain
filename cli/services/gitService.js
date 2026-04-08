@@ -246,11 +246,14 @@ export function gitAddAll(cwd) {
   return runGitCommand(["add", "--all"], cwd);
 }
 
-export function getRepositoryLog(cwd, limit = 20, runner = runGitCommand) {
-  return runner(
-    ["log", `--max-count=${limit}`, "--date=short", "--pretty=format:%h %ad %an %s"],
-    cwd
-  );
+export function getRepositoryLog(cwd, limit = null, runner = runGitCommand) {
+  const args = ["log", "--date=short", "--pretty=format:%h %ad %an %s"];
+
+  if (limit != null) {
+    args.splice(1, 0, `--max-count=${limit}`);
+  }
+
+  return runner(args, cwd);
 }
 
 function describeStatusCode(code, area) {

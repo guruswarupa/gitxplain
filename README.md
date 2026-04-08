@@ -19,7 +19,7 @@ Supported providers:
 - Supports release-branch merge previews driven by detected version bumps in diffs
 - Supports automatic release tagging driven by the same version-bump detection used for release merges
 - Supports AI-assisted commit planning for uncommitted working tree changes
-- Supports quick repository log output for recent history inspection
+- Supports quick repository log output for full history inspection
 - Supports single commits, commit ranges, and branch-vs-base comparisons
 - Truncates oversized diffs before sending them to the model and reports that truncation
 - Streams output for supported providers
@@ -182,7 +182,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--tag`: preview or create release tags from the same detected version windows
 - `--commit`: propose commits for current uncommitted changes
-- `--log`: print recent Git log entries for the current repository
+- `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
@@ -201,7 +201,7 @@ gitxplain log
 gitxplain --log
 ```
 
-Both forms print the latest commits in a compact one-line format using the current repository, without calling the LLM.
+Both forms print the repository history in a compact one-line format using the current repository, without calling the LLM.
 
 ## Quick Actions
 

@@ -41,7 +41,20 @@ test("fetchCommitData reads a commit range", () => {
   assert.match(data.commitMessage, /First change/);
 });
 
-test("getRepositoryLog fetches recent repository history", () => {
+test("getRepositoryLog fetches full repository history by default", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "abc1234 2026-04-08 Guru Initial commit";
+  };
+
+  const log = getRepositoryLog("/tmp", null, runner);
+
+  assert.equal(log, "abc1234 2026-04-08 Guru Initial commit");
+  assert.deepEqual(calls, ["log --date=short --pretty=format:%h %ad %an %s"]);
+});
+
+test("getRepositoryLog supports an explicit limit when requested", () => {
   const calls = [];
   const runner = (args) => {
     calls.push(args.join(" "));

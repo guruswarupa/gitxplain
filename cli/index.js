@@ -117,7 +117,7 @@ What It Does:
   Plan commits for uncommitted work and split oversized commits into atomic steps
   Merge release-version branch changes into a dedicated release branch
   Tag release-version commit windows on the current branch
-  Inspect recent repository history and working tree status without calling the LLM
+  Inspect repository history and working tree status without calling the LLM
   Run quick local actions to stage, unstage, delete files, pop stashes, or push
 
 Modes:
@@ -133,7 +133,7 @@ Modes:
   --merge      Preview or apply a merge into the release branch based on version bumps
   --tag        Preview or create release tags based on version bumps
   --commit     Propose commits for current uncommitted changes
-  --log        Print recent Git log entries for the current repository
+  --log        Print Git log entries for the current repository
   --status     Print Git working tree status for the current repository
   --execute    Execute a proposed split or commit plan
   --dry-run    Preview the plan without executing it (default for --split and --commit)

@@ -341,18 +341,40 @@ function finalizeRootSplitBranch(tempBranch, originalBranch, rewrittenHeadSha, c
   gitDeleteBranch(tempBranch, cwd);
 }
 
-function replayDescendantsOntoSplitTip(replayBranch, splitTipSha, targetSha, cwd) {
-  gitCheckout(replayBranch, cwd);
+function replayDescendantsOntoSplitTip(
+  replayBranch,
+  splitTipSha,
+  targetSha,
+  originalHeadSha,
+  expectedTreeSha,
+  cwd
+) {
+  const strategies = [null, "theirs", "ours"];
+  let lastError = null;
 
-  try {
-    gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd);
-    return;
-  } catch {
+  for (const strategy of strategies) {
+    gitCheckout(replayBranch, cwd);
+    gitResetHard(originalHeadSha, cwd);
+
+    try {
+      gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd, strategy);
+      const replayedTreeSha = resolveTreeSha("HEAD", cwd);
+
+      if (replayedTreeSha === expectedTreeSha) {
+        return getCurrentHeadSha(cwd);
+      }
+
+      lastError = new Error(
+        `Replay strategy ${strategy ?? "default"} completed, but the rewritten HEAD tree did not match the original HEAD tree.`
+      );
+    } catch (error) {
+      lastError = error;
+    }
+
     gitRebaseAbort(cwd);
   }
 
-  gitCheckout(replayBranch, cwd);
-  gitRebaseRebaseMergesOnto(splitTipSha, targetSha, cwd, "theirs");
+  throw lastError ?? new Error("Failed to replay descendant commits after split.");
 }
 
 export function executeSplit(plan, commitId, cwd) {
@@ -423,8 +445,14 @@ export function executeSplit(plan, commitId, cwd) {
     const splitTipSha = getCurrentHeadSha(cwd);
 
     if (commitsToReplay.length > 0) {
-      replayDescendantsOntoSplitTip(replayTempBranch, splitTipSha, targetSha, cwd);
-      const rewrittenReplayHeadSha = getCurrentHeadSha(cwd);
+      const rewrittenReplayHeadSha = replayDescendantsOntoSplitTip(
+        replayTempBranch,
+        splitTipSha,
+        targetSha,
+        originalHeadSha,
+        originalHeadTreeSha,
+        cwd
+      );
 
       if (rootSplitTempBranch) {
         finalizeRootSplitBranch(rootSplitTempBranch, rootSplitOriginalBranch, rewrittenReplayHeadSha, cwd);

@@ -13,7 +13,8 @@ const SUPPORTED_PROVIDERS = new Set([
 const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
 
 export function getProviderConfig(providerOverride, modelOverride) {
-    const defaultProvider = process.env.GROQ_API_KEY ? "groq" : "openai";
+  const defaultProvider = process.env.GROQ_API_KEY ? "groq" : "openai";
+  const provider = (providerOverride ?? process.env.LLM_PROVIDER ?? defaultProvider).toLowerCase();
 
   if (!SUPPORTED_PROVIDERS.has(provider)) {
     throw new Error(

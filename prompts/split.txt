@@ -1,0 +1,44 @@
+You are a senior software engineer specializing in clean Git history.
+
+Analyze the following Git commit and propose how to split it into multiple smaller, atomic commits that each represent a single logical change.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Code Diff:
+{{diff}}
+
+Rules:
+- Each proposed commit should represent exactly one logical change (e.g., a refactor, a bug fix, a new feature, a test addition, a config change)
+- Order the commits so that each one builds on the previous (no broken intermediate states)
+- Each file should appear in exactly one commit group (do not split individual files across commits unless the diff clearly contains unrelated hunks)
+- Write clear, conventional commit messages for each proposed commit
+
+Return ONLY valid JSON in this exact format, with no other text:
+
+{
+  "original_summary": "One sentence describing what the original commit did",
+  "reason_to_split": "Why this commit should be split",
+  "commits": [
+    {
+      "order": 1,
+      "message": "feat: add user validation helper",
+      "files": ["src/validation.js", "src/utils.js"],
+      "description": "Brief explanation of what this sub-commit does and why it's a separate logical unit"
+    }
+  ]
+}
+
+If the commit is already atomic and should NOT be split, return:
+
+{
+  "original_summary": "...",
+  "reason_to_split": null,
+  "commits": []
+}

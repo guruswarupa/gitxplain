@@ -1,0 +1,21 @@
+{
+  "name": "gitxplain",
+  "version": "0.1.0",
+  "description": "AI-powered Git commit explainer CLI",
+  "type": "module",
+  "bin": {
+    "gitxplain": "./cli/index.js"
+  },
+  "scripts": {
+    "start": "node ./cli/index.js",
+    "lint": "node --check ./cli/index.js && node --check ./cli/services/aiService.js && node --check ./cli/services/cacheService.js && node --check ./cli/services/clipboardService.js && node --check ./cli/services/commitService.js && node --check ./cli/services/configService.js && node --check ./cli/services/gitService.js && node --check ./cli/services/hookService.js && node --check ./cli/services/promptService.js && node --check ./cli/services/outputFormatter.js && node --check ./cli/services/splitService.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "git",
+    "cli",
+    "ai",
+    "developer-tools"
+  ],
+  "license": "MIT"
+}

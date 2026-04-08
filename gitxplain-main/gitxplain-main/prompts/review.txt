@@ -1,0 +1,26 @@
+Review this commit like a senior engineer performing code review.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Diff:
+{{diff}}
+
+Return:
+
+1. Review Findings:
+- List actionable findings ordered by severity
+- Include likely bugs, regressions, correctness risks, performance concerns, and maintainability issues
+- If there are no significant findings, say so explicitly
+
+2. Suggestions:
+- Give concrete follow-up improvements or tests to add
+
+3. Risk Level:
+- Low / Medium / High with reasoning

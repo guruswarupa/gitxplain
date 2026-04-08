@@ -1,0 +1,15 @@
+Explain this commit in simple terms for a junior developer.
+
+Focus on:
+- What changed
+- Why it changed
+- Simple explanation of logic
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Diff:
+{{diff}}

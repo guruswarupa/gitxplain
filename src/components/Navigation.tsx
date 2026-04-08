@@ -8,10 +8,11 @@ interface NavigationProps {
 
 export default function Navigation({ currentPage, onNavigate }: NavigationProps) {
   const navItems = [
+    { id: 'story', label: 'Commit Story Desktop', icon: GitBranch },
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'health', label: 'Environment Health', icon: Activity },
     { id: 'review', label: 'Code Review', icon: Code2 },
-    { id: 'commits', label: 'Commit Story', icon: GitBranch },
+    { id: 'commits', label: 'Old Commit View', icon: GitBranch },
   ];
 
   return (

@@ -1,0 +1,22 @@
+Explain every changed line in this commit in a developer-friendly way.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Diff:
+{{diff}}
+
+Instructions:
+- Go file by file
+- For each diff hunk, explain what the removed lines did before
+- Explain what each added line does now
+- Call out important renamed variables, condition changes, function call changes, and control-flow changes
+- Keep the order aligned with the diff so a developer can read the explanation side by side with the patch
+- If a line is context-only and unchanged, mention it only when it helps explain surrounding modifications
+- End each file section with a short summary of the behavior change in that file

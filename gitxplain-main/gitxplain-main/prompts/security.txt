@@ -1,0 +1,33 @@
+Analyze this commit from a security perspective.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Diff:
+{{diff}}
+
+Focus on:
+- Input validation issues
+- Injection risks
+- Authentication or authorization regressions
+- Sensitive data exposure
+- Insecure defaults
+- Dependency or configuration risks
+
+Return:
+
+1. Security Findings:
+- List any vulnerabilities or suspicious changes
+- If none are apparent, say so clearly
+
+2. Severity:
+- Low / Medium / High with reasoning
+
+3. Recommended Mitigations:
+- Suggest concrete hardening steps or tests

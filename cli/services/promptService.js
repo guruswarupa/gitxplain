@@ -14,7 +14,9 @@ const PROMPT_FILES = {
   impact: "impact.txt",
   lines: "lines.txt",
   review: "review.txt",
-  security: "security.txt"
+  security: "security.txt",
+  split: "split.txt",
+  commit: "commit.txt"
 };
 
 function fillTemplate(template, values) {

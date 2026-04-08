@@ -9,9 +9,11 @@ import {
   gitCommit,
   gitResetHard,
   gitUnstageAll,
+  hasStagedChanges,
   isAncestorCommit,
   isWorkingTreeClean,
   listCommitsAfter,
+  resolveTreeSha,
   runGitCommandUnchecked,
   resolveCommitSha
 } from "./gitService.js";
@@ -78,6 +80,23 @@ function validateCommitEntry(entry, index) {
   }
 }
 
+function validateUniqueFileAssignments(commits) {
+  const seenFiles = new Map();
+
+  for (const commit of commits) {
+    for (const file of commit.files) {
+      const previousOrder = seenFiles.get(file);
+      if (previousOrder != null) {
+        throw new Error(
+          `Failed to parse split plan: file "${file}" appears in both commit ${previousOrder} and commit ${commit.order}.`
+        );
+      }
+
+      seenFiles.set(file, commit.order);
+    }
+  }
+}
+
 export function parseSplitPlan(explanation) {
   let parsed;
 
@@ -107,6 +126,7 @@ export function parseSplitPlan(explanation) {
   }
 
   parsed.commits.forEach(validateCommitEntry);
+  validateUniqueFileAssignments(parsed.commits);
 
   return parsed;
 }
@@ -161,6 +181,7 @@ function sortPlanCommits(plan) {
 export function executeSplit(plan, commitId, cwd) {
   const targetSha = resolveCommitSha(commitId, cwd);
   const originalHeadSha = getCurrentHeadSha(cwd);
+  const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
 
   try {
@@ -199,11 +220,25 @@ export function executeSplit(plan, commitId, cwd) {
     for (const commit of orderedCommits) {
       gitUnstageAll(cwd);
       gitAddFiles(commit.files, cwd);
+
+      if (!hasStagedChanges(cwd)) {
+        throw new Error(
+          `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
+        );
+      }
+
       gitCommit(commit.message, cwd);
     }
 
     for (const replayCommit of commitsToReplay) {
       gitCherryPick(replayCommit, cwd);
+    }
+
+    const rewrittenHeadTreeSha = resolveTreeSha("HEAD", cwd);
+    if (rewrittenHeadTreeSha !== originalHeadTreeSha) {
+      throw new Error(
+        "Split verification failed: the rewritten HEAD tree does not match the original HEAD tree."
+      );
     }
   } catch (error) {
     gitCherryPickAbort(cwd);

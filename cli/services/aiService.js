@@ -1,4 +1,5 @@
 import process from "node:process";
+import { createCacheKey, readCache, writeCache } from "./cacheService.js";
 import { buildPrompt } from "./promptService.js";
 
 const SUPPORTED_PROVIDERS = new Set([
@@ -9,7 +10,7 @@ const SUPPORTED_PROVIDERS = new Set([
   "ollama",
   "chutes"
 ]);
-const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers. Never use markdown formatting like **, __, ~~, #, >, -, *, or code blocks. Use plain text only.";
+const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
 
 export function getProviderConfig(providerOverride, modelOverride) {
   const provider = (providerOverride ?? process.env.LLM_PROVIDER ?? "openai").toLowerCase();
@@ -32,7 +33,7 @@ export function getProviderConfig(providerOverride, modelOverride) {
   if (provider === "groq") {
     return {
       provider,
-      apiKey: process.env.GROQ_API_KEY ?? process.env.GROQ_API,
+      apiKey: process.env.GROQ_API_KEY,
       baseUrl: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
       model: modelOverride ?? process.env.GROQ_MODEL ?? process.env.LLM_MODEL ?? "llama-3.3-70b-versatile"
     };
@@ -88,7 +89,7 @@ export function validateProviderConfig(config) {
   }
 }
 
-async function requestOpenAICompatible(config, prompt) {
+function buildOpenAICompatibleHeaders(config) {
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.apiKey}`
@@ -99,9 +100,77 @@ async function requestOpenAICompatible(config, prompt) {
     headers["X-Title"] = process.env.OPENROUTER_APP_NAME ?? "gitxplain";
   }
 
+  return headers;
+}
+
+function extractUsage(data) {
+  return data.usage ?? null;
+}
+
+function extractOpenAIContent(data) {
+  return data.choices?.[0]?.message?.content?.trim() || "No explanation returned by the model.";
+}
+
+function extractGeminiText(data) {
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  return parts
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function consumeSseStream(response, getChunkText, onChunk) {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming is not supported by this runtime.");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const dataLines = event
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .filter(Boolean);
+
+      for (const line of dataLines) {
+        if (line === "[DONE]") {
+          continue;
+        }
+
+        const parsed = JSON.parse(line);
+        const chunkText = getChunkText(parsed);
+        if (!chunkText) {
+          continue;
+        }
+
+        fullText += chunkText;
+        onChunk?.(chunkText);
+      }
+    }
+  }
+
+  return fullText.trim();
+}
+
+async function requestOpenAICompatible(config, prompt, options) {
+  const startedAt = Date.now();
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
-    headers,
+    headers: buildOpenAICompatibleHeaders(config),
     body: JSON.stringify({
       model: config.model,
       messages: [
@@ -114,7 +183,8 @@ async function requestOpenAICompatible(config, prompt) {
           content: prompt
         }
       ],
-      temperature: 0.2
+      temperature: 0.2,
+      stream: options.stream === true
     })
   });
 
@@ -123,69 +193,170 @@ async function requestOpenAICompatible(config, prompt) {
     throw new Error(`${config.provider} request failed (${response.status}): ${errorText}`);
   }
 
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content?.trim() || "No explanation returned by the model.";
-}
+  if (options.stream) {
+    const explanation = await consumeSseStream(
+      response,
+      (data) => {
+        const content = data.choices?.[0]?.delta?.content;
+        if (typeof content === "string") {
+          return content;
+        }
 
-function extractGeminiText(data) {
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  return parts
-    .map((part) => part.text)
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-}
+        if (Array.isArray(content)) {
+          return content.map((item) => item.text ?? "").join("");
+        }
 
-async function requestGemini(config, prompt) {
-  const response = await fetch(
-    `${config.baseUrl}/models/${config.model}:generateContent?key=${encodeURIComponent(config.apiKey)}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
+        return "";
       },
-      body: JSON.stringify({
-        systemInstruction: {
+      options.onChunk
+    );
+
+    return {
+      explanation,
+      responseMeta: {
+        provider: config.provider,
+        model: config.model,
+        cacheHit: false,
+        latencyMs: Date.now() - startedAt,
+        usage: null
+      }
+    };
+  }
+
+  const data = await response.json();
+  return {
+    explanation: extractOpenAIContent(data),
+    responseMeta: {
+      provider: config.provider,
+      model: config.model,
+      cacheHit: false,
+      latencyMs: Date.now() - startedAt,
+      usage: extractUsage(data)
+    }
+  };
+}
+
+async function requestGemini(config, prompt, options) {
+  const startedAt = Date.now();
+  const endpoint = options.stream
+    ? `${config.baseUrl}/models/${config.model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.apiKey)}`
+    : `${config.baseUrl}/models/${config.model}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [
+          {
+            text: SYSTEM_PROMPT
+          }
+        ]
+      },
+      contents: [
+        {
+          role: "user",
           parts: [
             {
-              text: SYSTEM_PROMPT
+              text: prompt
             }
           ]
-        },
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: prompt
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.2
         }
-      })
-    }
-  );
+      ],
+      generationConfig: {
+        temperature: 0.2
+      }
+    })
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`gemini request failed (${response.status}): ${errorText}`);
   }
 
-  const data = await response.json();
-  return extractGeminiText(data) || "No explanation returned by the model.";
-}
-
-export async function generateExplanation({ mode, commitData, providerOverride, modelOverride }) {
-  const config = getProviderConfig(providerOverride, modelOverride);
-  validateProviderConfig(config);
-  const prompt = buildPrompt(mode, commitData);
-
-  if (config.provider === "gemini") {
-    return requestGemini(config, prompt);
+  if (options.stream) {
+    const explanation = await consumeSseStream(response, extractGeminiText, options.onChunk);
+    return {
+      explanation,
+      responseMeta: {
+        provider: config.provider,
+        model: config.model,
+        cacheHit: false,
+        latencyMs: Date.now() - startedAt,
+        usage: null
+      }
+    };
   }
 
-  return requestOpenAICompatible(config, prompt);
+  const data = await response.json();
+  return {
+    explanation: extractGeminiText(data).trim() || "No explanation returned by the model.",
+    responseMeta: {
+      provider: config.provider,
+      model: config.model,
+      cacheHit: false,
+      latencyMs: Date.now() - startedAt,
+      usage: data.usageMetadata ?? null
+    }
+  };
+}
+
+export async function generateExplanation({
+  mode,
+  commitData,
+  providerOverride,
+  modelOverride,
+  maxDiffLines,
+  stream = false,
+  onChunk = null,
+  onStart = null
+}) {
+  const config = getProviderConfig(providerOverride, modelOverride);
+  validateProviderConfig(config);
+
+  const { prompt, promptMeta } = buildPrompt(mode, commitData, { maxDiffLines });
+  onStart?.({
+    promptMeta,
+    provider: config.provider,
+    model: config.model
+  });
+
+  const cacheKey = createCacheKey({
+    targetRef: commitData.targetRef,
+    mode,
+    provider: config.provider,
+    model: config.model,
+    prompt
+  });
+  const cached = readCache(cacheKey);
+
+  if (cached) {
+    return {
+      explanation: cached.explanation,
+      promptMeta,
+      responseMeta: {
+        ...cached.responseMeta,
+        cacheHit: true
+      }
+    };
+  }
+
+  const requestOptions = { stream, onChunk };
+  const result =
+    config.provider === "gemini"
+      ? await requestGemini(config, prompt, requestOptions)
+      : await requestOpenAICompatible(config, prompt, requestOptions);
+
+  writeCache(cacheKey, {
+    explanation: result.explanation,
+    responseMeta: result.responseMeta
+  });
+
+  return {
+    explanation: result.explanation,
+    promptMeta,
+    responseMeta: result.responseMeta
+  };
 }

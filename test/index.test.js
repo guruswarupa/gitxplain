@@ -144,6 +144,22 @@ test("parseArgs handles del command", () => {
   assert.equal(parsed.commitRef, null);
 });
 
+test("parseArgs handles pop command with numeric stash index", () => {
+  const parsed = parseArgs(["node", "gitxplain", "pop", "2"]);
+
+  assert.equal(parsed.popCommand, true);
+  assert.equal(parsed.stashIndex, "2");
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles pop command without an explicit stash index", () => {
+  const parsed = parseArgs(["node", "gitxplain", "pop"]);
+
+  assert.equal(parsed.popCommand, true);
+  assert.equal(parsed.stashIndex, null);
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles commit subcommand and flag", () => {
   const commandParsed = parseArgs(["node", "gitxplain", "commit"]);
   assert.equal(commandParsed.commitCommand, true);

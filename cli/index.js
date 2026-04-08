@@ -13,11 +13,13 @@ import {
   fetchCommitData,
   fetchWorkingTreeData,
   gitAddFiles,
+  gitStashPop,
   gitRestoreStaged,
   getRepositoryLog,
   getRepositoryStatus,
   getDefaultBaseRef,
-  isGitRepository
+  isGitRepository,
+  resolveStashRef
 } from "./services/gitService.js";
 import { installHook } from "./services/hookService.js";
 import {
@@ -83,6 +85,7 @@ Usage:
   gitxplain add <path> [more-paths...]
   gitxplain remove <path> [more-paths...]
   gitxplain del <path> [more-paths...]
+  gitxplain pop [stash-index]
   gitxplain install-hook [hook-name]
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
@@ -120,6 +123,7 @@ Quick Actions:
   add         Stage one or more files with git add
   remove      Unstage one or more files with git restore --staged
   del         Delete one or more files from the working tree
+  pop         Pop a stash entry with a plain numeric index like "pop 2"
 
 Output:
   --json       Print structured JSON output
@@ -160,6 +164,8 @@ Examples:
   gitxplain add README.md
   gitxplain remove README.md
   gitxplain del scratch.txt
+  gitxplain pop
+  gitxplain pop 2
   gitxplain HEAD~1 --split
   gitxplain HEAD --split --execute
   gitxplain HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -270,6 +276,7 @@ export function parseArgs(argv) {
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
+  const isPopCommand = subcommand === "pop";
 
   return {
     subcommand,
@@ -283,8 +290,10 @@ export function parseArgs(argv) {
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
+    popCommand: isPopCommand,
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths: isAddCommand || isRemoveCommand || isDeleteCommand ? positional.slice(1) : [],
+    stashIndex: isPopCommand ? positional[1] ?? null : null,
     commitRef:
       isInstallHook ||
       isLogCommand ||
@@ -295,6 +304,7 @@ export function parseArgs(argv) {
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
+      isPopCommand ||
       subcommand === "help"
         ? null
         : positional[0] ?? null,
@@ -453,8 +463,8 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand) {
-    if (parsed.actionPaths.length === 0) {
+  if (parsed.addCommand || parsed.removeCommand || parsed.deleteCommand || parsed.popCommand) {
+    if (!parsed.popCommand && parsed.actionPaths.length === 0) {
       throw new Error(`No paths provided for "${parsed.subcommand}".`);
     }
 
@@ -470,8 +480,15 @@ export async function main(argv = process.argv) {
       return 0;
     }
 
-    deletePaths(parsed.actionPaths, cwd);
-    console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+    if (parsed.deleteCommand) {
+      deletePaths(parsed.actionPaths, cwd);
+      console.log(`Deleted ${parsed.actionPaths.join(", ")}.`);
+      return 0;
+    }
+
+    const stashRef = resolveStashRef(parsed.stashIndex);
+    gitStashPop(parsed.stashIndex, cwd);
+    console.log(`Popped ${stashRef}.`);
     return 0;
   }
 

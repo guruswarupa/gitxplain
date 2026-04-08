@@ -1,18 +1,27 @@
 import process from "node:process";
 import {
+  deletePaths,
   getCommitParents,
+  getCurrentBranchName,
   getCurrentHeadSha,
   gitCherryPick,
   gitCherryPickAbort,
   gitCherryPickNoCommit,
   gitAddFiles,
+  gitCheckout,
+  gitCheckoutDetached,
+  gitCheckoutOrphan,
   gitCommit,
+  gitDeleteBranch,
+  gitForceBranch,
+  gitRemoveCachedAll,
   gitResetHard,
   gitUnstageAll,
   hasStagedChanges,
   isAncestorCommit,
   isWorkingTreeClean,
   listCommitsAfter,
+  listFilesInRef,
   resolveTreeSha,
   runGitCommandUnchecked,
   resolveCommitSha
@@ -80,21 +89,51 @@ function validateCommitEntry(entry, index) {
   }
 }
 
-function validateUniqueFileAssignments(commits) {
-  const seenFiles = new Map();
+function sortPlanCommits(plan) {
+  return [...plan.commits].sort((left, right) => left.order - right.order);
+}
 
-  for (const commit of commits) {
+function normalizeSplitPlan(plan) {
+  const seenFiles = new Set();
+  const normalizedCommits = [];
+  const dedupedFiles = [];
+
+  for (const commit of sortPlanCommits(plan)) {
+    const files = [];
+
     for (const file of commit.files) {
-      const previousOrder = seenFiles.get(file);
-      if (previousOrder != null) {
-        throw new Error(
-          `Failed to parse split plan: file "${file}" appears in both commit ${previousOrder} and commit ${commit.order}.`
-        );
+      if (seenFiles.has(file)) {
+        dedupedFiles.push(file);
+        continue;
       }
 
-      seenFiles.set(file, commit.order);
+      seenFiles.add(file);
+      files.push(file);
     }
+
+    if (files.length === 0) {
+      continue;
+    }
+
+    normalizedCommits.push({
+      ...commit,
+      files
+    });
   }
+
+  return {
+    ...plan,
+    commits: normalizedCommits.map((commit, index) => ({
+      ...commit,
+      order: index + 1
+    })),
+    warnings:
+      dedupedFiles.length > 0
+        ? [
+            `Duplicate file assignments were removed from later split groups: ${[...new Set(dedupedFiles)].join(", ")}.`
+          ]
+        : []
+  };
 }
 
 export function parseSplitPlan(explanation) {
@@ -126,9 +165,8 @@ export function parseSplitPlan(explanation) {
   }
 
   parsed.commits.forEach(validateCommitEntry);
-  validateUniqueFileAssignments(parsed.commits);
 
-  return parsed;
+  return normalizeSplitPlan(parsed);
 }
 
 export function formatSplitPlan(plan) {
@@ -137,6 +175,10 @@ export function formatSplitPlan(plan) {
     `${colorize("Original Summary:", ANSI.bold + ANSI.cyan)} ${plan.original_summary}`,
     `${colorize("Reason To Split:", ANSI.bold + ANSI.cyan)} ${plan.reason_to_split ?? "Already atomic"}`
   ];
+
+  for (const warning of plan.warnings ?? []) {
+    lines.push(`${colorize("Warning:", ANSI.bold + ANSI.yellow)} ${warning}`);
+  }
 
   if (plan.commits.length === 0) {
     lines.push(colorize("No split recommended.", ANSI.green));
@@ -174,38 +216,60 @@ function getDirtyWorkingTreeSummary(cwd) {
     .join("\n");
 }
 
-function sortPlanCommits(plan) {
-  return [...plan.commits].sort((left, right) => left.order - right.order);
-}
-
 export function validateSplitExecutionTarget(
   commitId,
   cwd,
   helpers = {
     resolveCommitSha,
     getCurrentHeadSha,
-    getCommitParents
+    getCommitParents,
+    isAncestorCommit
   }
 ) {
   const targetSha = helpers.resolveCommitSha(commitId, cwd);
   const currentHeadSha = helpers.getCurrentHeadSha(cwd);
 
-  if (targetSha !== currentHeadSha) {
-    throw new Error(
-      "Automatic split execution currently supports only the current HEAD commit. Use --split to preview older commits, then rebase or cherry-pick manually."
-    );
+  if (!helpers.isAncestorCommit(targetSha, currentHeadSha, cwd)) {
+    throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
   }
 
   const parents = helpers.getCommitParents(targetSha, cwd);
-  if (parents.length !== 1) {
+  if (parents.length > 1) {
     throw new Error("Automatic split execution only supports non-merge commits.");
   }
 
   return {
     targetSha,
     currentHeadSha,
-    parentSha: parents[0]
+    parentSha: parents[0] ?? null,
+    isHeadTarget: targetSha === currentHeadSha
   };
+}
+
+function createTempRootSplitBranchName() {
+  return `gitxplain-split-root-${Date.now()}`;
+}
+
+function restoreOriginalPointer(originalBranch, originalHeadSha, cwd) {
+  if (originalBranch === "HEAD") {
+    gitCheckoutDetached(originalHeadSha, cwd);
+    return;
+  }
+
+  gitCheckout(originalBranch, cwd);
+  gitResetHard(originalHeadSha, cwd);
+}
+
+function finalizeRootSplitBranch(tempBranch, originalBranch, rewrittenHeadSha, cwd) {
+  if (originalBranch === "HEAD") {
+    gitCheckoutDetached(rewrittenHeadSha, cwd);
+    gitDeleteBranch(tempBranch, cwd);
+    return;
+  }
+
+  gitForceBranch(originalBranch, rewrittenHeadSha, cwd);
+  gitCheckout(originalBranch, cwd);
+  gitDeleteBranch(tempBranch, cwd);
 }
 
 export function executeSplit(plan, commitId, cwd) {
@@ -213,6 +277,8 @@ export function executeSplit(plan, commitId, cwd) {
   const originalHeadSha = currentHeadSha;
   const originalHeadTreeSha = resolveTreeSha("HEAD", cwd);
   const orderedCommits = sortPlanCommits(plan);
+  let rootSplitTempBranch = null;
+  let rootSplitOriginalBranch = null;
 
   try {
     if (!isWorkingTreeClean(cwd)) {
@@ -224,10 +290,6 @@ export function executeSplit(plan, commitId, cwd) {
       );
     }
 
-    if (!isAncestorCommit(targetSha, originalHeadSha, cwd)) {
-      throw new Error(`Commit ${commitId} is not reachable from the current HEAD.`);
-    }
-
     const commitsToReplay = listCommitsAfter(targetSha, originalHeadSha, cwd);
 
     for (const replayCommit of commitsToReplay) {
@@ -236,6 +298,46 @@ export function executeSplit(plan, commitId, cwd) {
           "Automatic split currently supports linear history only. Rebase merge commits manually first."
         );
       }
+    }
+
+    if (parentSha == null) {
+      const originalBranch = getCurrentBranchName(cwd);
+      const tempBranch = createTempRootSplitBranchName();
+      const originalHeadFiles = listFilesInRef("HEAD", cwd);
+      rootSplitOriginalBranch = originalBranch;
+      rootSplitTempBranch = tempBranch;
+
+      gitCheckoutOrphan(tempBranch, cwd);
+      gitRemoveCachedAll(cwd);
+      deletePaths(originalHeadFiles, cwd);
+      gitCherryPickNoCommit(targetSha, cwd);
+
+      for (const commit of orderedCommits) {
+        gitUnstageAll(cwd);
+        gitAddFiles(commit.files, cwd);
+
+        if (!hasStagedChanges(cwd)) {
+          throw new Error(
+            `Split plan execution failed: commit ${commit.order} (${commit.message}) does not stage any new changes.`
+          );
+        }
+
+        gitCommit(commit.message, cwd);
+      }
+
+      for (const replayCommit of commitsToReplay) {
+        gitCherryPick(replayCommit, cwd);
+      }
+
+      const rewrittenHeadTreeSha = resolveTreeSha("HEAD", cwd);
+      if (rewrittenHeadTreeSha !== originalHeadTreeSha) {
+        throw new Error(
+          "Split verification failed: the rewritten HEAD tree does not match the original HEAD tree."
+        );
+      }
+
+      finalizeRootSplitBranch(tempBranch, originalBranch, getCurrentHeadSha(cwd), cwd);
+      return;
     }
 
     gitResetHard(parentSha, cwd);
@@ -266,7 +368,18 @@ export function executeSplit(plan, commitId, cwd) {
     }
   } catch (error) {
     gitCherryPickAbort(cwd);
-    runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+
+    try {
+      if (rootSplitTempBranch) {
+        restoreOriginalPointer(rootSplitOriginalBranch ?? "HEAD", originalHeadSha, cwd);
+        gitDeleteBranch(rootSplitTempBranch, cwd);
+      } else {
+        runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+      }
+    } catch {
+      runGitCommandUnchecked(["reset", "--hard", originalHeadSha], cwd);
+    }
+
     console.error(error.message);
     console.error(buildRecoveryMessage(originalHeadSha));
     throw new Error("Split execution aborted.");

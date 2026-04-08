@@ -18,6 +18,7 @@ import {
   isWorkingTreeClean,
   listBranchCommits,
   listCommitsAfter,
+  listFilesInRef,
   listTags,
   localBranchExists,
   resolveCommitSha,
@@ -510,7 +511,7 @@ export function executeReleaseMerge(plan, cwd) {
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const originalReleaseSha = releaseExists ? resolveCommitSha(RELEASE_BRANCH, cwd) : null;
   const originalHeadSha = getCurrentHeadSha(cwd);
-  const originalHeadFiles = releaseExists ? [] : getCommitFiles("HEAD", cwd);
+  const originalHeadFiles = releaseExists ? [] : listFilesInRef("HEAD", cwd);
 
   try {
     if (releaseExists) {

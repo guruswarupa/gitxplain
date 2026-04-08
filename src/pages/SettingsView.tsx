@@ -3,8 +3,8 @@
  * Configure AI providers, API keys, and app preferences
  */
 
-import React, { useState, useEffect } from 'react';
-import { Settings, Key, Cpu, Check, AlertCircle, Eye, EyeOff, Save } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Settings, Key, Cpu, Check, AlertCircle, Eye, EyeOff, Save, X, ChevronDown } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 
 interface AISettings {
@@ -18,6 +18,19 @@ interface AISettings {
   ollamaBaseUrl: string;
 }
 
+const DEFAULT_AI_SETTINGS: AISettings = {
+  provider: 'openai',
+  model: 'gpt-4.1-mini',
+  openaiKey: '',
+  groqKey: '',
+  openrouterKey: '',
+  geminiKey: '',
+  chutesKey: '',
+  ollamaBaseUrl: 'http://127.0.0.1:11434/v1',
+};
+
+type ProviderId = 'openai' | 'groq' | 'openrouter' | 'gemini' | 'chutes' | 'ollama';
+
 const PROVIDERS = [
   { id: 'openai', name: 'OpenAI', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o', 'gpt-3.5-turbo'] },
   { id: 'groq', name: 'Groq', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'] },
@@ -27,45 +40,137 @@ const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', models: ['llama3.2', 'llama3.1', 'codellama', 'mistral'] },
 ];
 
+const KEY_BY_PROVIDER: Record<Exclude<ProviderId, 'ollama'>, keyof AISettings> = {
+  openai: 'openaiKey',
+  groq: 'groqKey',
+  openrouter: 'openrouterKey',
+  gemini: 'geminiKey',
+  chutes: 'chutesKey',
+};
+
+function getDefaultModel(provider: ProviderId): string {
+  return PROVIDERS.find(p => p.id === provider)?.models[0] || '';
+}
+
+function getProviderModels(provider: ProviderId): string[] {
+  return PROVIDERS.find((p) => p.id === provider)?.models || [];
+}
+
+function normalizeModelForProvider(provider: ProviderId, model: string): string {
+  const trimmedModel = String(model || '').trim();
+  const providerModels = getProviderModels(provider);
+  if (providerModels.length === 0) return trimmedModel;
+  if (providerModels.includes(trimmedModel)) return trimmedModel;
+  return providerModels[0];
+}
+
+function isProviderConfigured(settings: AISettings, provider: ProviderId): boolean {
+  if (provider === 'ollama') {
+    return Boolean(settings.ollamaBaseUrl.trim());
+  }
+  const keyField = KEY_BY_PROVIDER[provider];
+  return Boolean(String(settings[keyField] || '').trim());
+}
+
+function alignProviderWithConfiguredKey(settings: AISettings): AISettings {
+  const selectedProvider = settings.provider as ProviderId;
+  const preferredProviders: ProviderId[] = ['openai', 'groq', 'openrouter', 'gemini', 'chutes', 'ollama'];
+
+  if (isProviderConfigured(settings, selectedProvider)) {
+    return {
+      ...settings,
+      model: normalizeModelForProvider(selectedProvider, settings.model),
+    };
+  }
+
+  const fallbackProvider = preferredProviders.find((provider) => isProviderConfigured(settings, provider));
+  if (!fallbackProvider) {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    provider: fallbackProvider,
+    model: normalizeModelForProvider(fallbackProvider, settings.model || getDefaultModel(fallbackProvider)),
+  };
+}
+
 export default function SettingsView() {
   const { currentProject } = useCommitStoryStore();
-  const [settings, setSettings] = useState<AISettings>({
-    provider: 'openai',
-    model: 'gpt-4.1-mini',
-    openaiKey: '',
-    groqKey: '',
-    openrouterKey: '',
-    geminiKey: '',
-    chutesKey: '',
-    ollamaBaseUrl: 'http://127.0.0.1:11434/v1',
-  });
+  const [settings, setSettings] = useState<AISettings>(DEFAULT_AI_SETTINGS);
+  const [githubToken, setGithubToken] = useState('');
   
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [installingHook, setInstallingHook] = useState(false);
   const [hookStatus, setHookStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const hasHydrated = useRef(false);
 
   useEffect(() => {
     loadSettings();
   }, []);
 
+  useEffect(() => {
+    if (loading || !hasHydrated.current) {
+      return;
+    }
+
+    const persistTimer = setTimeout(() => {
+      persistSettings(settings, githubToken).catch((error) => {
+        console.error('Failed to auto-persist settings:', error);
+      });
+    }, 300);
+
+    return () => clearTimeout(persistTimer);
+  }, [settings, githubToken, loading]);
+
   const loadSettings = async () => {
     try {
       const storedSettings = await window.electronAPI.storeGet('settings');
       if (storedSettings?.ai) {
-        setSettings(prev => ({ ...prev, ...storedSettings.ai }));
+        const merged = { ...DEFAULT_AI_SETTINGS, ...storedSettings.ai } as AISettings;
+        const aligned = alignProviderWithConfiguredKey(merged);
+        setSettings(aligned);
+      }
+      if (storedSettings?.integrations?.githubToken) {
+        setGithubToken(String(storedSettings.integrations.githubToken));
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
+      hasHydrated.current = true;
       setLoading(false);
     }
   };
 
+  const persistSettings = async (nextAiSettings: AISettings, nextGithubToken: string = githubToken) => {
+    const existingSettings = (await window.electronAPI.storeGet('settings')) || {};
+    await window.electronAPI.storeSet('settings', {
+      ...existingSettings,
+      ai: nextAiSettings,
+      integrations: {
+        ...(existingSettings.integrations || {}),
+        githubToken: nextGithubToken.trim(),
+      },
+    });
+  };
+
   const saveSettings = async () => {
     try {
-      await window.electronAPI.storeSet('settings', { ai: settings });
+      const sanitizedSettings: AISettings = {
+        ...settings,
+        model: normalizeModelForProvider(settings.provider as ProviderId, settings.model),
+        openaiKey: settings.openaiKey.trim(),
+        groqKey: settings.groqKey.trim(),
+        openrouterKey: settings.openrouterKey.trim(),
+        geminiKey: settings.geminiKey.trim(),
+        chutesKey: settings.chutesKey.trim(),
+        ollamaBaseUrl: settings.ollamaBaseUrl.trim(),
+      };
+      setSettings(sanitizedSettings);
+      await persistSettings(sanitizedSettings, githubToken);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
@@ -73,13 +178,54 @@ export default function SettingsView() {
     }
   };
 
-  const handleProviderChange = (provider: string) => {
+  const clearApiKey = async (key: keyof Pick<AISettings, 'openaiKey' | 'groqKey' | 'openrouterKey' | 'geminiKey' | 'chutesKey'>) => {
+    const nextSettings = { ...settings, [key]: '' };
+    setSettings(nextSettings);
+    try {
+      await persistSettings(nextSettings);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to clear API key:', error);
+    }
+  };
+
+  const handleProviderChange = async (provider: string) => {
     const providerConfig = PROVIDERS.find(p => p.id === provider);
-    setSettings(prev => ({
-      ...prev,
+    const nextSettings = {
+      ...settings,
       provider,
       model: providerConfig?.models[0] || '',
-    }));
+    };
+    setSettings(nextSettings);
+    try {
+      await persistSettings(nextSettings);
+    } catch (error) {
+      console.error('Failed to persist provider change:', error);
+    }
+  };
+
+  const handleModelChange = async (model: string) => {
+    const nextSettings = {
+      ...settings,
+      model,
+    };
+    setSettings(nextSettings);
+    setIsModelMenuOpen(false);
+    try {
+      await persistSettings(nextSettings);
+    } catch (error) {
+      console.error('Failed to persist model change:', error);
+    }
+  };
+
+  const clearGithubToken = async () => {
+    setGithubToken('');
+    try {
+      await persistSettings(settings, '');
+    } catch (error) {
+      console.error('Failed to clear GitHub token:', error);
+    }
   };
 
   const toggleShowKey = (keyId: string) => {
@@ -165,17 +311,35 @@ export default function SettingsView() {
         {/* Model Selection */}
         <div className="mb-4">
           <label className="block text-sm font-medium mb-2">Model</label>
-          <select
-            value={settings.model}
-            onChange={(e) => setSettings(prev => ({ ...prev, model: e.target.value }))}
-            className="w-full p-3 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
-          >
-            {currentProvider?.models.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
+          <div>
+            <button
+              type="button"
+              onClick={() => setIsModelMenuOpen(prev => !prev)}
+              className="w-full p-3 rounded-md border border-border bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary flex items-center justify-between"
+            >
+              <span>{settings.model}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${isModelMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isModelMenuOpen && (
+              <div className="mt-2 w-full rounded-md border border-border bg-card shadow-lg overflow-hidden">
+                {currentProvider?.models.map((model) => (
+                  <button
+                    key={model}
+                    type="button"
+                    onClick={() => handleModelChange(model)}
+                    className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                      settings.model === model
+                        ? 'bg-primary/20 text-foreground'
+                        : 'bg-popover text-foreground hover:bg-accent'
+                    }`}
+                  >
+                    {model}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -199,8 +363,18 @@ export default function SettingsView() {
                 value={settings.openaiKey}
                 onChange={(e) => setSettings(prev => ({ ...prev, openaiKey: e.target.value }))}
                 placeholder="sk-..."
-                className="w-full p-3 pr-10 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+                className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {settings.openaiKey && (
+                <button
+                  type="button"
+                  onClick={() => clearApiKey('openaiKey')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear OpenAI API key"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleShowKey('openai')}
@@ -223,8 +397,18 @@ export default function SettingsView() {
                 value={settings.groqKey}
                 onChange={(e) => setSettings(prev => ({ ...prev, groqKey: e.target.value }))}
                 placeholder="gsk_..."
-                className="w-full p-3 pr-10 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+                className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {settings.groqKey && (
+                <button
+                  type="button"
+                  onClick={() => clearApiKey('groqKey')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear Groq API key"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleShowKey('groq')}
@@ -247,8 +431,18 @@ export default function SettingsView() {
                 value={settings.openrouterKey}
                 onChange={(e) => setSettings(prev => ({ ...prev, openrouterKey: e.target.value }))}
                 placeholder="sk-or-..."
-                className="w-full p-3 pr-10 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+                className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {settings.openrouterKey && (
+                <button
+                  type="button"
+                  onClick={() => clearApiKey('openrouterKey')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear OpenRouter API key"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleShowKey('openrouter')}
@@ -271,8 +465,18 @@ export default function SettingsView() {
                 value={settings.geminiKey}
                 onChange={(e) => setSettings(prev => ({ ...prev, geminiKey: e.target.value }))}
                 placeholder="AIza..."
-                className="w-full p-3 pr-10 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+                className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {settings.geminiKey && (
+                <button
+                  type="button"
+                  onClick={() => clearApiKey('geminiKey')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear Gemini API key"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleShowKey('gemini')}
@@ -295,8 +499,18 @@ export default function SettingsView() {
                 value={settings.chutesKey}
                 onChange={(e) => setSettings(prev => ({ ...prev, chutesKey: e.target.value }))}
                 placeholder="cpk_..."
-                className="w-full p-3 pr-10 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+                className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {settings.chutesKey && (
+                <button
+                  type="button"
+                  onClick={() => clearApiKey('chutesKey')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear Chutes API key"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => toggleShowKey('chutes')}
@@ -324,6 +538,43 @@ export default function SettingsView() {
               Ollama runs locally - no API key needed
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* GitHub Integration */}
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold mb-4">GitHub Integration</h2>
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">GitHub Access Token</label>
+          <div className="relative">
+            <input
+              type={showKeys.github ? 'text' : 'password'}
+              value={githubToken}
+              onChange={(e) => setGithubToken(e.target.value)}
+              placeholder="ghp_..."
+              className="w-full p-3 pr-20 rounded-md border border-border bg-background focus:ring-2 focus:ring-primary focus:border-primary"
+            />
+            {githubToken && (
+              <button
+                type="button"
+                onClick={clearGithubToken}
+                className="absolute right-10 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear GitHub token"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => toggleShowKey('github')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              {showKeys.github ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Used to load your GitHub repositories in the sidebar for one-click import.
+          </p>
         </div>
       </div>
 

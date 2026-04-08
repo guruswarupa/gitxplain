@@ -61,6 +61,33 @@ app.on('activate', () => {
 // Initialize electron-store for persistent settings
 const store = new Store() as any;
 
+interface GitHubRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  private: boolean;
+  clone_url: string;
+  html_url: string;
+  default_branch: string;
+}
+
+function sanitizeFolderName(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, '-').trim();
+}
+
+function buildClonePath(baseDir: string, repoName: string): string {
+  const safeName = sanitizeFolderName(repoName) || 'repository';
+  let candidate = path.join(baseDir, safeName);
+  let suffix = 1;
+
+  while (fs.existsSync(candidate)) {
+    suffix += 1;
+    candidate = path.join(baseDir, `${safeName}-${suffix}`);
+  }
+
+  return candidate;
+}
+
 // IPC handlers
 ipcMain.handle('get-app-path', () => {
   return app.getAppPath();
@@ -78,6 +105,58 @@ ipcMain.handle('select-folder', async () => {
   });
   if (result.canceled) return null;
   return result.filePaths[0];
+});
+
+ipcMain.handle('github-list-repos', async (event, token: string) => {
+  const trimmedToken = String(token || '').trim();
+  if (!trimmedToken) {
+    throw new Error('GitHub token is missing. Add it in Settings first.');
+  }
+
+  const response = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+    headers: {
+      Authorization: `token ${trimmedToken}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'gitxplain-gui',
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to load GitHub repositories (${response.status}): ${body}`);
+  }
+
+  const repos = (await response.json()) as GitHubRepo[];
+  return repos.map((repo) => ({
+    id: repo.id,
+    name: repo.name,
+    fullName: repo.full_name,
+    private: repo.private,
+    cloneUrl: repo.clone_url,
+    htmlUrl: repo.html_url,
+    defaultBranch: repo.default_branch,
+  }));
+});
+
+ipcMain.handle('github-clone-repo', async (event, { cloneUrl, fullName, token }) => {
+  const baseDir = path.join(app.getPath('documents'), 'gitxplain-repos');
+  fs.mkdirSync(baseDir, { recursive: true });
+
+  const targetPath = buildClonePath(baseDir, fullName || 'repository');
+  const authToken = String(token || '').trim();
+  let authenticatedUrl = String(cloneUrl || '');
+
+  if (authToken && authenticatedUrl.startsWith('https://')) {
+    authenticatedUrl = authenticatedUrl.replace(
+      'https://',
+      `https://x-access-token:${encodeURIComponent(authToken)}@`
+    );
+  }
+
+  const git = simpleGit();
+  await git.clone(authenticatedUrl, targetPath, ['--depth', '200']);
+
+  return targetPath;
 });
 
 // Get Git commit log
@@ -111,6 +190,7 @@ ipcMain.handle('git-details', async (event, { path: repoPath, hash }) => {
     
     // Get commit show with stats
     const show = await git.show([hash, '--stat', '--format=%H|%an|%ae|%aI|%s|%b']);
+    const numstat = await git.show([hash, '--numstat', '--format=']);
     
     // Get full diff
     const diff = await git.diff([`${hash}^`, hash]);
@@ -119,6 +199,32 @@ ipcMain.handle('git-details', async (event, { path: repoPath, hash }) => {
     const statsMatch = show.match(/(\d+) files? changed/);
     const insertionsMatch = show.match(/(\d+) insertions?/);
     const deletionsMatch = show.match(/(\d+) deletions?/);
+    const files = numstat
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        // Accept both tab-delimited and whitespace-delimited numstat output.
+        const match = line.match(/^(\d+|-)\s+(\d+|-)\s+(.+)$/);
+        if (!match) return null;
+
+        const additions = Number.parseInt(match[1], 10);
+        const deletions = Number.parseInt(match[2], 10);
+        const path = match[3]?.trim();
+
+        if (!path) return null;
+
+        const safeAdditions = Number.isFinite(additions) ? additions : 0;
+        const safeDeletions = Number.isFinite(deletions) ? deletions : 0;
+
+        return {
+          path,
+          additions: safeAdditions,
+          deletions: safeDeletions,
+          changes: safeAdditions + safeDeletions,
+        };
+      })
+      .filter((file): file is { path: string; additions: number; deletions: number; changes: number } => file !== null);
     
     return {
       diff,
@@ -127,6 +233,7 @@ ipcMain.handle('git-details', async (event, { path: repoPath, hash }) => {
         insertions: insertionsMatch ? parseInt(insertionsMatch[1]) : 0,
         deletions: deletionsMatch ? parseInt(deletionsMatch[1]) : 0,
       },
+      files,
     };
   } catch (error: any) {
     console.error('Git details error:', error);
@@ -199,6 +306,89 @@ ipcMain.handle('git-current-branch', async (event, repoPath) => {
   }
 });
 
+// List local branches and current branch
+ipcMain.handle('git-list-branches', async (event, repoPath) => {
+  try {
+    const git = simpleGit(repoPath);
+    await git.fetch(['--all', '--prune']);
+    const branchInfo = await git.branchLocal();
+    const allBranchInfo = await git.branch(['-a']);
+
+    const remoteOnlyBranches = allBranchInfo.all
+      .filter((name) => name.startsWith('remotes/origin/'))
+      .filter((name) => !name.includes('HEAD ->'))
+      .map((name) => name.replace(/^remotes\/origin\//, ''))
+      .filter((name) => name && !branchInfo.all.includes(name));
+
+    const mergedBranches = [...new Set([...branchInfo.all, ...remoteOnlyBranches])].sort((left, right) => {
+      if (left === branchInfo.current) return -1;
+      if (right === branchInfo.current) return 1;
+      return left.localeCompare(right);
+    });
+
+    return {
+      current: branchInfo.current,
+      all: mergedBranches,
+    };
+  } catch (error: any) {
+    console.error('Git list branches error:', error);
+    throw new Error(`Failed to list branches: ${error.message}`);
+  }
+});
+
+// Checkout branch
+ipcMain.handle('git-checkout-branch', async (event, { repoPath, branchName }) => {
+  try {
+    const git = simpleGit(repoPath);
+    const targetBranch = String(branchName || '').trim();
+    if (!targetBranch) {
+      throw new Error('Branch name is required');
+    }
+
+    const localBranches = await git.branchLocal();
+    if (localBranches.all.includes(targetBranch)) {
+      await git.checkout(targetBranch);
+    } else {
+      const remoteBranch = `origin/${targetBranch}`;
+      try {
+        await git.checkout(['--track', remoteBranch]);
+      } catch {
+        await git.checkout(targetBranch);
+      }
+    }
+
+    const branchInfo = await git.branchLocal();
+    return branchInfo.current;
+  } catch (error: any) {
+    console.error('Git checkout error:', error);
+    throw new Error(`Failed to checkout branch: ${error.message}`);
+  }
+});
+
+// Push current branch to origin
+ipcMain.handle('git-push-current-branch', async (event, repoPath) => {
+  try {
+    const git = simpleGit(repoPath);
+    const branchInfo = await git.branchLocal();
+    const currentBranch = branchInfo.current;
+
+    if (!currentBranch) {
+      throw new Error('No active branch to push');
+    }
+
+    try {
+      await git.push('origin', currentBranch);
+    } catch {
+      await git.push(['--set-upstream', 'origin', currentBranch]);
+    }
+
+    return currentBranch;
+  } catch (error: any) {
+    console.error('Git push error:', error);
+    throw new Error(`Failed to push current branch: ${error.message}`);
+  }
+});
+
 // Store operations for settings
 ipcMain.handle('store-get', (event, key) => {
   return store.get(key);
@@ -229,9 +419,58 @@ interface GitxplainOptions {
   stdinText?: string;
 }
 
+type ProviderId = 'openai' | 'groq' | 'openrouter' | 'gemini' | 'chutes' | 'ollama';
+
+function normalizeSettingString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getProviderApiKey(provider: ProviderId, aiSettings: any): string | undefined {
+  if (provider === 'openai') return normalizeSettingString(aiSettings.openaiKey);
+  if (provider === 'groq') return normalizeSettingString(aiSettings.groqKey);
+  if (provider === 'openrouter') return normalizeSettingString(aiSettings.openrouterKey);
+  if (provider === 'gemini') return normalizeSettingString(aiSettings.geminiKey);
+  if (provider === 'chutes') return normalizeSettingString(aiSettings.chutesKey);
+  return undefined;
+}
+
+function resolveProviderAndModel(
+  aiSettings: any,
+  providerOverride?: string,
+  modelOverride?: string
+): { provider: ProviderId; model?: string } {
+  const requestedProvider = (normalizeSettingString(providerOverride) || normalizeSettingString(aiSettings.provider) || 'openai') as ProviderId;
+  const requestedModel = normalizeSettingString(modelOverride) || normalizeSettingString(aiSettings.model);
+
+  if (requestedProvider === 'ollama') {
+    return { provider: 'ollama', model: requestedModel };
+  }
+
+  if (getProviderApiKey(requestedProvider, aiSettings)) {
+    return { provider: requestedProvider, model: requestedModel };
+  }
+
+  const fallbackProvider = (['openai', 'groq', 'openrouter', 'gemini', 'chutes'] as ProviderId[])
+    .find((provider) => getProviderApiKey(provider, aiSettings));
+
+  if (fallbackProvider) {
+    return { provider: fallbackProvider };
+  }
+
+  return { provider: requestedProvider, model: requestedModel };
+}
+
 // Helper to run gitxplain CLI as subprocess
 function runGitxplain(options: GitxplainOptions): Promise<{ output: string; error?: string }> {
   return new Promise((resolve, reject) => {
+    const settings = store.get('settings') as any || {};
+    const aiSettings = settings.ai || {};
+    const resolved = resolveProviderAndModel(aiSettings, options.provider, options.model);
+    const effectiveProvider = resolved.provider;
+    const effectiveModel = resolved.model;
+
     const args = [
       GITXPLAIN_CLI,
       options.commitRef,
@@ -244,37 +483,33 @@ function runGitxplain(options: GitxplainOptions): Promise<{ output: string; erro
     }
     
     // Add provider/model overrides
-    if (options.provider) {
-      args.push('--provider', options.provider);
-    }
-    if (options.model) {
-      args.push('--model', options.model);
+    args.push('--provider', effectiveProvider);
+    if (effectiveModel) {
+      args.push('--model', effectiveModel);
     }
     if (options.extraArgs && options.extraArgs.length > 0) {
       args.push(...options.extraArgs);
     }
     
-    // Get API keys from store
-    const settings = store.get('settings') as any || {};
-    const aiSettings = settings.ai || {};
-    
     // Build environment with API keys - define all keys upfront for TypeScript
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      LLM_PROVIDER: options.provider || aiSettings.provider || 'openai',
-      LLM_MODEL: aiSettings.model || undefined,
-      OPENAI_API_KEY: aiSettings.openaiKey || undefined,
-      GROQ_API_KEY: aiSettings.groqKey || undefined,
-      OPENROUTER_API_KEY: aiSettings.openrouterKey || undefined,
-      GEMINI_API_KEY: aiSettings.geminiKey || undefined,
-      CHUTES_API_KEY: aiSettings.chutesKey || undefined,
-      OLLAMA_BASE_URL: aiSettings.ollamaBaseUrl || undefined,
+      ELECTRON_RUN_AS_NODE: '1',
+      LLM_PROVIDER: effectiveProvider,
+      LLM_MODEL: effectiveModel,
+      OPENAI_API_KEY: normalizeSettingString(aiSettings.openaiKey),
+      GROQ_API_KEY: normalizeSettingString(aiSettings.groqKey),
+      OPENROUTER_API_KEY: normalizeSettingString(aiSettings.openrouterKey),
+      GEMINI_API_KEY: normalizeSettingString(aiSettings.geminiKey),
+      CHUTES_API_KEY: normalizeSettingString(aiSettings.chutesKey),
+      OLLAMA_BASE_URL: normalizeSettingString(aiSettings.ollamaBaseUrl),
     };
     
-    const proc = spawn('node', args, {
+    const proc = spawn(process.execPath, ['--no-warnings', ...args], {
       cwd: options.repoPath,
       env,
-      shell: true,
+      shell: false,
+      windowsHide: true,
     });
     
     let stdout = '';
@@ -288,8 +523,18 @@ function runGitxplain(options: GitxplainOptions): Promise<{ output: string; erro
       stderr += data.toString();
     });
 
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE/closed stdin errors when child exits quickly.
+    });
+
     if (options.stdinText) {
-      proc.stdin.write(options.stdinText);
+      if (!proc.stdin.destroyed && proc.stdin.writable) {
+        proc.stdin.write(options.stdinText);
+      }
+      if (!proc.stdin.destroyed) {
+        proc.stdin.end();
+      }
+    } else if (!proc.stdin.destroyed) {
       proc.stdin.end();
     }
     
@@ -311,23 +556,26 @@ function runGitxplainCommand(repoPath: string, args: string[]): Promise<{ output
   return new Promise((resolve, reject) => {
     const settings = store.get('settings') as any || {};
     const aiSettings = settings.ai || {};
+    const resolved = resolveProviderAndModel(aiSettings);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      LLM_PROVIDER: aiSettings.provider || 'openai',
-      LLM_MODEL: aiSettings.model || undefined,
-      OPENAI_API_KEY: aiSettings.openaiKey || undefined,
-      GROQ_API_KEY: aiSettings.groqKey || undefined,
-      OPENROUTER_API_KEY: aiSettings.openrouterKey || undefined,
-      GEMINI_API_KEY: aiSettings.geminiKey || undefined,
-      CHUTES_API_KEY: aiSettings.chutesKey || undefined,
-      OLLAMA_BASE_URL: aiSettings.ollamaBaseUrl || undefined,
+      ELECTRON_RUN_AS_NODE: '1',
+      LLM_PROVIDER: resolved.provider,
+      LLM_MODEL: resolved.model,
+      OPENAI_API_KEY: normalizeSettingString(aiSettings.openaiKey),
+      GROQ_API_KEY: normalizeSettingString(aiSettings.groqKey),
+      OPENROUTER_API_KEY: normalizeSettingString(aiSettings.openrouterKey),
+      GEMINI_API_KEY: normalizeSettingString(aiSettings.geminiKey),
+      CHUTES_API_KEY: normalizeSettingString(aiSettings.chutesKey),
+      OLLAMA_BASE_URL: normalizeSettingString(aiSettings.ollamaBaseUrl),
     };
 
-    const proc = spawn('node', [GITXPLAIN_CLI, ...args], {
+    const proc = spawn(process.execPath, ['--no-warnings', GITXPLAIN_CLI, ...args], {
       cwd: repoPath,
       env,
-      shell: true,
+      shell: false,
+      windowsHide: true,
     });
 
     let stdout = '';

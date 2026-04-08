@@ -1,5 +1,5 @@
-appId: com.devinsight.app
-productName: DevInsight
+appId: com.gitxplain.app
+productName: gitxplain
 directories:
   output: dist
   buildResources: public

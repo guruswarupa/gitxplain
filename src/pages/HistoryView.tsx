@@ -3,11 +3,267 @@
  * Displays commit list with details panel and AI explanation
  */
 
-import React, { useState } from 'react';
-import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2, Scissors } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2, Scissors, Upload, GitBranch } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { Commit } from '../models';
 import SearchBar from '../components/SearchBar';
+
+const MAX_AI_WORDS = 500;
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/^[ \t]*[-*+]\s+/gm, '- ')
+    .replace(/\r/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function removeCliPreamble(text: string): string {
+  let cleaned = stripAnsi(text).trim();
+
+  // Case 1: metadata appears as a standalone line.
+  cleaned = cleaned
+    .split('\n')
+    .filter((line) => !line.trim().toLowerCase().startsWith('gitxplain - target:'))
+    .join('\n')
+    .trim();
+
+  // Case 2: metadata is prepended inline before the narrative body.
+  cleaned = cleaned.replace(/^gitxplain\s*-\s*target:[\s\S]*?(?=\b(1\.\s+|summary:|review findings:|security findings:|implementation details:))/i, '');
+
+  // Case 3: fallback - if gitxplain metadata exists anywhere, cut text from first meaningful section.
+  if (/gitxplain\s*-\s*target:/i.test(cleaned)) {
+    const sectionMatch = cleaned.match(/\b(1\.\s+(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Review Findings|Suggestions|Security Findings|Severity|Recommended Mitigations)|Summary:|Review Findings:|Security Findings:|Implementation Details:)/i);
+    if (sectionMatch && typeof sectionMatch.index === 'number') {
+      cleaned = cleaned.slice(sectionMatch.index);
+    }
+  }
+
+  return cleaned.trim();
+}
+
+function structureSections(text: string): string {
+  let structured = text;
+
+  // Force line breaks for common inline metadata separators.
+  structured = structured.replace(/\s+-\s+(Type:|Files Changed:|Stats:|Mode:|Provider:|Model:)/gi, '\n$1');
+
+  // If output is collapsed into one line, split before known section starts.
+  structured = structured.replace(/\s(?=(\d+\.\s+(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Review Findings|Suggestions|Security Findings|Severity|Recommended Mitigations)\b))/gi, '\n\n');
+
+  // Break common section headings onto separate lines for readability.
+  structured = structured.replace(
+    /\s*(\d+)\.\s*(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Review Findings|Suggestions|Security Findings|Severity|Recommended Mitigations):\s*/gi,
+    '\n\n$1. $2:\n'
+  );
+
+  // Handle headings that come without colon, e.g. "1. Review Findings".
+  structured = structured.replace(
+    /\s*(\d+)\.\s*(Summary|Issue|Root Cause|Fix|Impact|Risk Level|Technical Breakdown|Review Findings|Suggestions|Security Findings|Severity|Recommended Mitigations)\s*(?=(\d+\.\s)|$)/gi,
+    '\n\n$1. $2:\n'
+  );
+
+  // Put each numbered item on its own block when the model returns one long paragraph.
+  structured = structured.replace(/(\S)\s+(\d+\.\s)/g, '$1\n\n$2');
+
+  // Ensure list markers start on new lines.
+  structured = structured.replace(/\s+-\s+/g, '\n- ');
+
+  // Normalize whitespace while preserving intentional new lines.
+  structured = structured
+    .split('\n')
+    .map((line) => line.replace(/[ \t]{2,}/g, ' ').trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return structured;
+}
+
+function truncateWords(text: string, maxWords: number): { text: string; truncated: boolean } {
+  const tokens = text.split(/(\s+)/);
+  let wordCount = 0;
+  const kept: string[] = [];
+
+  for (const token of tokens) {
+    if (!token) continue;
+
+    if (/^\s+$/.test(token)) {
+      kept.push(token);
+      continue;
+    }
+
+    if (wordCount >= maxWords) {
+      break;
+    }
+
+    kept.push(token);
+    wordCount += 1;
+  }
+
+  const truncated = wordCount < text.split(/\s+/).filter(Boolean).length;
+  if (!truncated) {
+    return { text, truncated: false };
+  }
+
+  const formatted = kept.join('').replace(/[ \t]+\n/g, '\n').trimEnd();
+  return {
+    text: `${formatted}\n\n[Output truncated for readability]`,
+    truncated: true,
+  };
+}
+
+function formatAiOutput(raw: string): string {
+  const withoutPreamble = removeCliPreamble(raw);
+  const cleaned = stripMarkdown(withoutPreamble);
+  const structured = structureSections(cleaned);
+  return truncateWords(structured, MAX_AI_WORDS).text;
+}
+
+function formatSplitPreview(raw: string): string {
+  return stripAnsi(raw)
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function renderSplitPreview(text: string) {
+  const lines = formatSplitPreview(text).split('\n');
+
+  return (
+    <div className="space-y-2 text-sm">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          return <div key={`sp-empty-${index}`} className="h-2" />;
+        }
+
+        if (/^split plan$/i.test(trimmed)) {
+          return (
+            <h4 key={`sp-title-${index}`} className="text-base font-semibold text-foreground">
+              {trimmed}
+            </h4>
+          );
+        }
+
+        if (/^\d+\.\s+/.test(trimmed)) {
+          return (
+            <h5 key={`sp-step-${index}`} className="font-semibold text-foreground pt-1">
+              {trimmed}
+            </h5>
+          );
+        }
+
+        const metaMatch = trimmed.match(/^(Original Summary|Reason To Split|Files|Why):\s*(.*)$/i);
+        if (metaMatch) {
+          return (
+            <p key={`sp-meta-${index}`} className="leading-6 text-foreground break-words">
+              <span className="font-semibold">{metaMatch[1]}:</span>{' '}
+              <span className="text-muted-foreground">{metaMatch[2]}</span>
+            </p>
+          );
+        }
+
+        return (
+          <p key={`sp-line-${index}`} className="leading-6 text-muted-foreground break-words">
+            {trimmed}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function isHeadingLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+
+  // Examples: "Summary", "1. Summary:", "Implementation Details"
+  const headingPattern = /^(\d+\.\s*)?[A-Za-z][A-Za-z\s/-]{1,60}:?$/;
+  return headingPattern.test(trimmed);
+}
+
+function renderStructuredAiOutput(text: string) {
+  const lines = text.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trim();
+
+    if (!line) {
+      i += 1;
+      continue;
+    }
+
+    if (line.startsWith('- ') || line.startsWith('• ')) {
+      const items: string[] = [];
+      while (i < lines.length) {
+        const bulletLine = lines[i].trim();
+        if (!(bulletLine.startsWith('- ') || bulletLine.startsWith('• '))) {
+          break;
+        }
+        items.push(bulletLine.replace(/^[-•]\s+/, ''));
+        i += 1;
+      }
+
+      blocks.push(
+        <ul key={`list-${i}`} className="list-disc pl-6 space-y-1 mb-4">
+          {items.map((item, idx) => (
+            <li key={`item-${i}-${idx}`}>{item}</li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (isHeadingLine(line)) {
+      blocks.push(
+        <h5 key={`heading-${i}`} className="text-xl font-semibold mt-3 mb-2">
+          {line.replace(/:$/, '')}
+        </h5>
+      );
+      i += 1;
+      continue;
+    }
+
+    const paragraphLines: string[] = [line];
+    i += 1;
+    while (i < lines.length) {
+      const nextLine = lines[i].trim();
+      if (!nextLine || nextLine.startsWith('- ') || nextLine.startsWith('• ') || isHeadingLine(nextLine)) {
+        break;
+      }
+      paragraphLines.push(nextLine);
+      i += 1;
+    }
+
+    blocks.push(
+      <p key={`para-${i}`} className="mb-4 leading-8 text-base">
+        {paragraphLines.join(' ')}
+      </p>
+    );
+  }
+
+  return blocks;
+}
 
 export default function HistoryView() {
   const {
@@ -32,6 +288,64 @@ export default function HistoryView() {
   const [splitLoading, setSplitLoading] = useState(false);
   const [splitExecuting, setSplitExecuting] = useState(false);
   const [splitError, setSplitError] = useState<string>('');
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushError, setPushError] = useState<string>('');
+  const [pushSuccessMessage, setPushSuccessMessage] = useState<string>('');
+  const [pushSuccessVisible, setPushSuccessVisible] = useState(false);
+  const [currentBranch, setCurrentBranch] = useState<string>('');
+  const [branches, setBranches] = useState<string[]>([]);
+  const [branchLoading, setBranchLoading] = useState(false);
+
+  const loadBranchData = async () => {
+    if (!currentProject) return;
+
+    setBranchLoading(true);
+    try {
+      const branchData = await window.electronAPI.listBranches(currentProject.path);
+      setCurrentBranch(branchData.current || '');
+      setBranches(branchData.all || []);
+    } catch (error: any) {
+      const message = String(error?.message || 'Failed to load branch information.');
+      if (message.includes('No handler registered for') && message.includes('git-list-branches')) {
+        setPushError('Branch controls need an app restart to load. Please restart the Electron app and try again.');
+      } else {
+        setPushError(message);
+      }
+    } finally {
+      setBranchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setPushError('');
+    setPushSuccessMessage('');
+    loadBranchData();
+  }, [currentProject?.path]);
+
+  useEffect(() => {
+    if (!pushSuccessMessage) {
+      setPushSuccessVisible(false);
+      return;
+    }
+
+    setPushSuccessVisible(true);
+
+    const fadeTimer = setTimeout(() => {
+      setPushSuccessVisible(false);
+    }, 4500);
+
+    const clearTimer = setTimeout(() => {
+      setPushSuccessMessage('');
+    }, 5000);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [pushSuccessMessage]);
+
+  const getProviderHelpMessage = (modeLabel: string) =>
+    `Unable to run ${modeLabel}. Check your active AI provider and API key in Settings, then try again.`;
 
   const handleCommitClick = (commit: Commit) => {
     setSelectedCommit(commit);
@@ -52,13 +366,13 @@ export default function HistoryView() {
       );
       
       if (result.error) {
-        setAiExplanation(`**Error:** ${result.error}\n\n${result.output || 'Make sure your AI provider API key is configured in Settings.'}`);
+        setAiExplanation(`Error (Explain): ${result.error}\n\n${result.output || getProviderHelpMessage('Full Explanation')}`);
       } else {
-        setAiExplanation(result.output);
+        setAiExplanation(formatAiOutput(result.output));
       }
     } catch (error: any) {
       console.error('Failed to explain commit:', error);
-      setAiExplanation(`**Failed to explain commit:** ${error.message}\n\nMake sure gitxplain CLI is available and your AI provider is configured.`);
+      setAiExplanation(`Failed to explain commit: ${error.message}\n\nMake sure gitxplain CLI is available and your AI provider is configured.`);
     } finally {
       setAiLoading(false);
     }
@@ -76,9 +390,9 @@ export default function HistoryView() {
       );
       
       if (result.error) {
-        setAiExplanation(`**Error:** ${result.error}\n\n${result.output || 'Make sure your AI provider API key is configured in Settings.'}`);
+        setAiExplanation(`Error (Review): ${result.error}\n\n${result.output || getProviderHelpMessage('Code Review')}`);
       } else {
-        setAiExplanation(result.output);
+        setAiExplanation(formatAiOutput(result.output));
       }
     } catch (error: any) {
       console.error('Failed to get code review:', error);
@@ -100,9 +414,9 @@ export default function HistoryView() {
       );
       
       if (result.error) {
-        setAiExplanation(`**Error:** ${result.error}\n\n${result.output || 'Make sure your AI provider API key is configured in Settings.'}`);
+        setAiExplanation(`Error (Security): ${result.error}\n\n${result.output || getProviderHelpMessage('Security Analysis')}`);
       } else {
-        setAiExplanation(result.output);
+        setAiExplanation(formatAiOutput(result.output));
       }
     } catch (error: any) {
       console.error('Failed to get security analysis:', error);
@@ -124,9 +438,9 @@ export default function HistoryView() {
       );
       
       if (result.error) {
-        setAiExplanation(`**Error:** ${result.error}\n\n${result.output || 'Make sure your AI provider API key is configured in Settings.'}`);
+        setAiExplanation(`Error (Line-by-Line): ${result.error}\n\n${result.output || getProviderHelpMessage('Line-by-Line Walkthrough')}`);
       } else {
-        setAiExplanation(result.output);
+        setAiExplanation(formatAiOutput(result.output));
       }
     } catch (error: any) {
       console.error('Failed to get line-by-line explanation:', error);
@@ -185,10 +499,51 @@ export default function HistoryView() {
       const refreshedCommits = await window.electronAPI.getLog(currentProject.path, { maxCount: 500 });
       setCommits(refreshedCommits);
       setSelectedCommit(null);
+      setPushError('');
+      setPushSuccessMessage('Split completed successfully. Click Sync Changes when you are ready to push.');
     } catch (error: any) {
       setSplitError(error.message || 'Failed to execute split.');
     } finally {
       setSplitExecuting(false);
+    }
+  };
+
+  const handlePushAfterSplit = async () => {
+    if (!currentProject) return;
+
+    setPushLoading(true);
+    setPushError('');
+    try {
+      const branch = await window.electronAPI.pushCurrentBranch(currentProject.path);
+      setPushSuccessMessage(`Successfully pushed branch \"${branch}\" to origin.`);
+    } catch (error: any) {
+      setPushError(error.message || 'Failed to push branch.');
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  const handleBranchChange = async (branchName: string) => {
+    if (!currentProject || !branchName || branchName === currentBranch) return;
+
+    setBranchLoading(true);
+    setPushError('');
+    setPushSuccessMessage('');
+
+    try {
+      const switchedTo = await window.electronAPI.checkoutBranch(currentProject.path, branchName);
+      setCurrentBranch(switchedTo);
+      setPushSuccessMessage(`Switched to branch "${switchedTo}".`);
+
+      const refreshedCommits = await window.electronAPI.getLog(currentProject.path, { maxCount: 500 });
+      setCommits(refreshedCommits);
+      setSelectedCommit(null);
+
+      await loadBranchData();
+    } catch (error: any) {
+      setPushError(error.message || 'Failed to switch branch.');
+    } finally {
+      setBranchLoading(false);
     }
   };
 
@@ -298,6 +653,62 @@ export default function HistoryView() {
 
       {/* Commit Details Panel */}
       <div className="flex-1 overflow-y-auto">
+        <div className="p-4 border-b border-border bg-card/50">
+          <div className="flex items-center justify-end gap-3 flex-wrap">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-background">
+              <GitBranch className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Branch</span>
+              <select
+                value={currentBranch}
+                onChange={(e) => handleBranchChange(e.target.value)}
+                disabled={branchLoading || branches.length === 0}
+                className="bg-background text-foreground text-sm font-medium focus:outline-none disabled:opacity-50 rounded px-2 py-1 border border-border"
+                style={{
+                  color: 'hsl(var(--foreground))',
+                  backgroundColor: 'hsl(var(--background))',
+                }}
+              >
+                {branches.length === 0 ? (
+                  <option
+                    value=""
+                    style={{
+                      color: 'hsl(var(--foreground))',
+                      backgroundColor: 'hsl(var(--background))',
+                    }}
+                  >
+                    {branchLoading ? 'Loading...' : 'No branches'}
+                  </option>
+                ) : (
+                  branches.map((branch) => (
+                    <option
+                      key={branch}
+                      value={branch}
+                      style={{
+                        color: 'hsl(var(--foreground))',
+                        backgroundColor: 'hsl(var(--background))',
+                      }}
+                    >
+                      {branch}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <button
+              onClick={handlePushAfterSplit}
+              disabled={pushLoading || branchLoading || !currentBranch}
+              className="flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 border border-border hover:bg-accent"
+            >
+              <Upload className="w-4 h-4" />
+              {pushLoading ? 'Syncing...' : 'Sync Changes'}
+            </button>
+          </div>
+          {(pushError || pushSuccessMessage) && (
+            <div className={`mt-3 p-3 rounded-md border text-sm transition-opacity duration-500 ${pushError ? 'border-red-500/40 bg-red-500/10 text-red-700 opacity-100' : `border-green-500/40 bg-green-500/10 text-green-700 ${pushSuccessVisible ? 'opacity-100' : 'opacity-0'}`}`}>
+              {pushError || pushSuccessMessage}
+            </div>
+          )}
+        </div>
         {selectedCommit ? (
           <div className="p-6">
             {/* Commit Header */}
@@ -403,10 +814,8 @@ export default function HistoryView() {
                   <Sparkles className="w-4 h-4 text-primary" />
                   {getModeLabel()}
                 </h4>
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  <pre className="whitespace-pre-wrap text-sm bg-background p-4 rounded-md overflow-x-auto">
-                    {aiExplanation}
-                  </pre>
+                <div className="text-sm bg-background p-5 rounded-md border border-border text-foreground">
+                  {renderStructuredAiOutput(aiExplanation)}
                 </div>
               </div>
             )}
@@ -456,8 +865,8 @@ export default function HistoryView() {
       </div>
 
       {showSplitModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-lg w-full max-w-3xl max-h-[85vh] overflow-hidden">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-background border border-border rounded-lg shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden">
             <div className="p-4 border-b border-border">
               <h3 className="text-lg font-semibold">Split Commit Preview</h3>
               <p className="text-sm text-muted-foreground mt-1">
@@ -480,9 +889,9 @@ export default function HistoryView() {
               )}
 
               {!splitLoading && !splitError && (
-                <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md overflow-x-auto">
-                  {splitPreview}
-                </pre>
+                <div className="bg-muted/60 border border-border rounded-md p-4 max-h-[52vh] overflow-y-auto">
+                  {renderSplitPreview(splitPreview)}
+                </div>
               )}
             </div>
 

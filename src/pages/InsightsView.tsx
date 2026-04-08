@@ -7,6 +7,22 @@ import React, { useState, useMemo } from 'react';
 import { BarChart3, TrendingUp, Users, FileCode, GitCommit, Download, FileText, Code, FileJson } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { generateReport, ReportOptions, defaultOptions } from '../services/reportService';
+import { CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+
+const RECENT_ACTIVITY_DAYS = 14;
+
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
 
 export default function InsightsView() {
   const { insights, insightsLoading, currentProject, commits, stories } = useCommitStoryStore();
@@ -39,16 +55,25 @@ export default function InsightsView() {
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count);
     
-    // Group commits by day
+    // Group commits by day (local time)
     const dayCounts = new Map<string, number>();
     commits.forEach(c => {
-      const date = new Date(c.date).toISOString().split('T')[0];
+      const date = toLocalDateKey(new Date(c.date));
       dayCounts.set(date, (dayCounts.get(date) || 0) + 1);
     });
-    const commitsPerDay = [...dayCounts.entries()]
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-14); // Last 14 days
+
+    // Create a fixed recent timeline and fill missing days with zeroes.
+    const today = new Date();
+    const windowStart = addDays(today, -(RECENT_ACTIVITY_DAYS - 1));
+    const commitsPerDay = Array.from({ length: RECENT_ACTIVITY_DAYS }, (_, index) => {
+      const day = addDays(windowStart, index);
+      const date = toLocalDateKey(day);
+      return {
+        date,
+        label: `${String(day.getMonth() + 1).padStart(2, '0')}/${String(day.getDate()).padStart(2, '0')}`,
+        count: dayCounts.get(date) || 0,
+      };
+    });
     
     // Get unique files
     const fileCounts = new Map<string, number>();
@@ -289,33 +314,63 @@ export default function InsightsView() {
           </div>
         </div>
 
-        {/* Commit Activity (Simple Bar Chart) */}
+        {/* Commit Activity */}
         <div className="bg-card border border-border rounded-lg p-6">
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <TrendingUp className="w-5 h-5" />
             Recent Activity
           </h3>
           {data.commitsPerDay?.length > 0 ? (
-            <div className="h-48 flex items-end justify-between gap-2">
-              {data.commitsPerDay.slice(-10).map((day, index) => {
-                const maxCount = Math.max(...data.commitsPerDay.map(d => d.count));
-                const height = (day.count / maxCount) * 100;
-                
-                return (
-                  <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                    <div className="flex-1 flex items-end w-full">
-                      <div
-                        className="w-full bg-primary rounded-t transition-all hover:bg-primary/80"
-                        style={{ height: `${height}%`, minHeight: '4px' }}
-                        title={`${day.date}: ${day.count} commits`}
-                      ></div>
-                    </div>
-                    <span className="text-xs text-muted-foreground text-center">
-                      {day.count}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.commitsPerDay} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    axisLine={false}
+                    interval="preserveStartEnd"
+                    minTickGap={18}
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tickLine={false}
+                    axisLine={false}
+                    width={28}
+                    tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+                  />
+                  <Tooltip
+                    cursor={false}
+                    contentStyle={{
+                      border: '1px solid hsl(var(--border))',
+                      backgroundColor: 'hsl(var(--background))',
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    formatter={(value) => [`${value} commits`, 'Activity']}
+                    labelFormatter={(label, payload) => {
+                      const day = payload?.[0]?.payload as { date?: string } | undefined;
+                      return day?.date || String(label);
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2.5}
+                    dot={{ r: 4, strokeWidth: 2, fill: 'hsl(var(--card))' }}
+                    activeDot={{ r: 5 }}
+                  >
+                    <LabelList
+                      dataKey="count"
+                      position="top"
+                      offset={8}
+                      className="fill-foreground text-xs"
+                    />
+                  </Line>
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">No activity data available</p>

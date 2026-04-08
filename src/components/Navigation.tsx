@@ -19,7 +19,7 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
     <nav className="border-b border-border bg-card">
       <div className="px-6 py-4">
         <div className="flex items-center gap-8">
-          <div className="font-bold text-lg text-primary">DevInsight</div>
+          <div className="font-bold text-lg text-primary">gitxplain</div>
           <div className="flex gap-4">
             {navItems.map((item) => {
               const Icon = item.icon;

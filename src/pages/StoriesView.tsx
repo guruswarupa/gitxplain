@@ -11,6 +11,91 @@ import { Story, StoryType, Commit } from '../models';
 import { commitGroupingEngine } from '../services/commitGrouping';
 import { generateUUID } from '../utils';
 
+const MAX_STORY_SUMMARY_WORDS = 140;
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/\r/g, '');
+}
+
+function truncateWords(text: string, maxWords: number): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return text;
+  return `${words.slice(0, maxWords).join(' ')}...`;
+}
+
+function cleanStorySummary(raw: string): string {
+  if (!raw) return '';
+
+  const cleaned = stripMarkdown(stripAnsi(raw))
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (/^#\s*gitxplain/i.test(line)) return false;
+      if (/^-\s*(target|type|files changed|stats|mode|commits|provider|model|warning):/i.test(line)) return false;
+      if (/^meta:/i.test(line)) return false;
+      if (/^(provider|model|cache|latency|usage):/i.test(line)) return false;
+      return true;
+    })
+    .join(' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return truncateWords(cleaned, MAX_STORY_SUMMARY_WORDS);
+}
+
+async function hydrateCommitsWithFiles(
+  repoPath: string,
+  commits: Commit[],
+  setProgress: (value: string) => void
+): Promise<Commit[]> {
+  const missingFiles = commits.filter((commit) => !commit.files || commit.files.length === 0);
+  if (missingFiles.length === 0) {
+    return commits;
+  }
+
+  const fileMap = new Map<string, Commit['files']>();
+  const batchSize = 20;
+
+  for (let start = 0; start < missingFiles.length; start += batchSize) {
+    const batch = missingFiles.slice(start, start + batchSize);
+    setProgress(`Loading commit files (${Math.min(start + batch.length, missingFiles.length)}/${missingFiles.length})...`);
+
+    const details = await Promise.all(
+      batch.map(async (commit) => {
+        try {
+          const commitDetails = await window.electronAPI.getCommitDetails(repoPath, commit.hash);
+          return { hash: commit.hash, files: commitDetails.files ?? [] };
+        } catch {
+          return { hash: commit.hash, files: [] };
+        }
+      })
+    );
+
+    for (const detail of details) {
+      fileMap.set(detail.hash, detail.files);
+    }
+  }
+
+  return commits.map((commit) => ({
+    ...commit,
+    files: commit.files && commit.files.length > 0 ? commit.files : (fileMap.get(commit.hash) ?? []),
+  }));
+}
+
 export default function StoriesView() {
   const {
     stories,
@@ -27,11 +112,18 @@ export default function StoriesView() {
     if (!currentProject || commits.length === 0) return;
     
     setStoriesLoading(true);
-    setGenerationProgress('Grouping commits...');
+    setGenerationProgress('Preparing commit data...');
     
     try {
+      const commitsWithFiles = await hydrateCommitsWithFiles(
+        currentProject.path,
+        commits,
+        setGenerationProgress
+      );
+
+      setGenerationProgress('Grouping commits...');
       // Step 1: Group commits using the grouping engine
-      const groups = commitGroupingEngine.groupCommits(commits);
+      const groups = commitGroupingEngine.groupCommits(commitsWithFiles);
       
       if (groups.length === 0) {
         setGenerationProgress('No commit groups found');
@@ -71,7 +163,8 @@ export default function StoriesView() {
           );
           
           if (result.output && !result.error) {
-            story.summary = result.output;
+            const cleaned = cleanStorySummary(result.output);
+            story.summary = cleaned || generateFallbackSummary(group.type, group.commits, Array.from(group.files));
           } else {
             // Fallback to generated summary
             story.summary = generateFallbackSummary(group.type, group.commits, Array.from(group.files));

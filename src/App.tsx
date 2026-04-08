@@ -43,7 +43,7 @@ export default function App() {
       {currentPage !== 'story' && (
         <Navigation currentPage={currentPage} onNavigate={(page) => setCurrentPage(page as Page)} />
       )}
-      <main className={`flex-1 ${currentPage === 'story' ? '' : 'overflow-auto'}`}>
+      <main className={`flex-1 min-h-0 ${currentPage === 'story' ? '' : 'overflow-auto'}`}>
         {error && <ErrorAlert message={error} onDismiss={clearError} />}
         {renderPage()}
       </main>

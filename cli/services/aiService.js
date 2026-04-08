@@ -11,6 +11,7 @@ const SUPPORTED_PROVIDERS = new Set([
   "chutes"
 ]);
 const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
+const CACHE_SCHEMA_VERSION = 2;
 
 function getProviderConfig(providerOverride, modelOverride) {
   const provider = (providerOverride ?? process.env.LLM_PROVIDER ?? "openai").toLowerCase();
@@ -324,6 +325,7 @@ export async function generateExplanation({
   });
 
   const cacheKey = createCacheKey({
+    cacheSchemaVersion: CACHE_SCHEMA_VERSION,
     targetRef: commitData.targetRef,
     mode,
     provider: config.provider,

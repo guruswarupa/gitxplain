@@ -3,11 +3,21 @@
  * Lists and manages Git repositories
  */
 
-import React, { useEffect } from 'react';
-import { FolderGit2, Plus, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { FolderGit2, Plus, Trash2, Github, Loader2, Download } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { Project } from '../models';
 import { generateUUID } from '../utils';
+
+interface GitHubRepoItem {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  cloneUrl: string;
+  htmlUrl: string;
+  defaultBranch: string;
+}
 
 export default function ProjectSidebar() {
   const {
@@ -21,6 +31,11 @@ export default function ProjectSidebar() {
     setCommitsLoading,
     setError,
   } = useCommitStoryStore();
+
+  const [githubRepos, setGithubRepos] = useState<GitHubRepoItem[]>([]);
+  const [githubLoading, setGithubLoading] = useState(false);
+  const [githubExpanded, setGithubExpanded] = useState(false);
+  const [importingRepoId, setImportingRepoId] = useState<number | null>(null);
 
   // Load saved projects on mount
   useEffect(() => {
@@ -112,6 +127,73 @@ export default function ProjectSidebar() {
     }
   };
 
+  const getGitHubToken = async (): Promise<string> => {
+    const appSettings = await window.electronAPI.storeGet('settings');
+    return String(appSettings?.integrations?.githubToken || '').trim();
+  };
+
+  const loadGitHubRepos = async () => {
+    setGithubLoading(true);
+    try {
+      const token = await getGitHubToken();
+      if (!token) {
+        setError('Add your GitHub token in Settings first.');
+        setGithubExpanded(true);
+        return;
+      }
+
+      const repos = await window.electronAPI.githubListRepos(token);
+      setGithubRepos(repos);
+      setGithubExpanded(true);
+    } catch (error: any) {
+      console.error('Failed to load GitHub repositories:', error);
+      setError(error.message || 'Failed to load GitHub repositories');
+    } finally {
+      setGithubLoading(false);
+    }
+  };
+
+  const handleImportGitHubRepo = async (repo: GitHubRepoItem) => {
+    setImportingRepoId(repo.id);
+    try {
+      const token = await getGitHubToken();
+      if (!token) {
+        setError('Add your GitHub token in Settings first.');
+        return;
+      }
+
+      const localPath = await window.electronAPI.githubCloneRepo(repo.cloneUrl, repo.fullName, token);
+
+      if (projects.some(p => p.path === localPath)) {
+        const existingProject = projects.find(p => p.path === localPath) || null;
+        if (existingProject) {
+          setCurrentProject(existingProject);
+          await loadCommits(existingProject);
+        }
+        return;
+      }
+
+      const project: Project = {
+        id: generateUUID(),
+        name: repo.fullName,
+        path: localPath,
+        lastSynced: Date.now(),
+      };
+
+      addProject(project);
+      setCurrentProject(project);
+
+      const updatedProjects = [...projects, project];
+      await saveProjects(updatedProjects);
+      await loadCommits(project);
+    } catch (error: any) {
+      console.error('Failed to import GitHub repository:', error);
+      setError(error.message || 'Failed to import GitHub repository');
+    } finally {
+      setImportingRepoId(null);
+    }
+  };
+
   const handleRemoveProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
     if (confirm('Remove this project from the list?')) {
@@ -131,6 +213,13 @@ export default function ProjectSidebar() {
         >
           <Plus className="w-5 h-5" />
         </button>
+        <button
+          onClick={loadGitHubRepos}
+          className="p-2 hover:bg-accent rounded-md transition-colors mt-2"
+          title="Import GitHub Repository"
+        >
+          {githubLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Github className="w-5 h-5" />}
+        </button>
       </div>
     );
   }
@@ -141,14 +230,55 @@ export default function ProjectSidebar() {
       <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-foreground">Repositories</h2>
-          <button
-            onClick={handleAddProject}
-            className="p-1.5 hover:bg-accent rounded-md transition-colors"
-            title="Add Repository"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={loadGitHubRepos}
+              className="p-1.5 hover:bg-accent rounded-md transition-colors"
+              title="Import from GitHub"
+            >
+              {githubLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={handleAddProject}
+              className="p-1.5 hover:bg-accent rounded-md transition-colors"
+              title="Add Local Repository"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+
+        {githubExpanded && (
+          <div className="rounded-md border border-border bg-muted/40 p-2">
+            <div className="text-xs font-medium mb-2 text-muted-foreground">GitHub Repositories</div>
+            <div className="max-h-44 overflow-y-auto space-y-1">
+              {githubRepos.length === 0 && !githubLoading ? (
+                <p className="text-xs text-muted-foreground">No repositories loaded yet.</p>
+              ) : (
+                githubRepos.map((repo) => (
+                  <div key={repo.id} className="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-accent/50">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{repo.fullName}</p>
+                      <p className="text-[10px] text-muted-foreground">{repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleImportGitHubRepo(repo)}
+                      disabled={importingRepoId === repo.id}
+                      className="px-2 py-1 text-[10px] rounded border border-border hover:bg-accent disabled:opacity-50"
+                    >
+                      {importingRepoId === repo.id ? 'Importing...' : (
+                        <span className="inline-flex items-center gap-1">
+                          <Download className="w-3 h-3" /> Import
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Project List */}

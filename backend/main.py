@@ -16,8 +16,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="DevInsight API",
-    description="API for DevInsight - A developer environment monitoring and code analysis tool",
+    title="gitxplain API",
+    description="API for gitxplain - Git commit analysis and code assistance",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -39,7 +39,7 @@ app.include_router(git.router, prefix="/api", tags=["git"])
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "DevInsight API is running"}
+    return {"message": "gitxplain API is running"}
 
 @app.get("/health")
 async def health_check():
@@ -48,7 +48,7 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     
-    parser = argparse.ArgumentParser(description="Start DevInsight API server")
+    parser = argparse.ArgumentParser(description="Start gitxplain API server")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--dev", action="store_true", help="Run in development mode with auto-reload")

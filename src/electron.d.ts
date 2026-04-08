@@ -15,6 +15,12 @@ export interface GitCommitDetails {
     insertions: number;
     deletions: number;
   };
+  files: Array<{
+    path: string;
+    additions: number;
+    deletions: number;
+    changes: number;
+  }>;
 }
 
 export interface GitStatusResult {
@@ -31,6 +37,21 @@ export interface GitxplainResult {
   error?: string;
 }
 
+export interface GitBranchList {
+  current: string;
+  all: string[];
+}
+
+export interface GitHubRepo {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  cloneUrl: string;
+  htmlUrl: string;
+  defaultBranch: string;
+}
+
 export interface ElectronAPI {
   // Folder selection
   selectFolder: () => Promise<string | null>;
@@ -40,13 +61,20 @@ export interface ElectronAPI {
   getCommitDetails: (path: string, hash: string) => Promise<GitCommitDetails>;
   getStatus: (path: string) => Promise<GitStatusResult>;
   commit: (path: string, message: string, files?: string[]) => Promise<string>;
+  pushCurrentBranch: (path: string) => Promise<string>;
   isRepo: (path: string) => Promise<boolean>;
   getCurrentBranch: (path: string) => Promise<string>;
+  listBranches: (path: string) => Promise<GitBranchList>;
+  checkoutBranch: (path: string, branchName: string) => Promise<string>;
   
   // Store operations
   storeGet: (key: string) => Promise<any>;
   storeSet: (key: string, value: any) => Promise<boolean>;
   storeDelete: (key: string) => Promise<boolean>;
+
+  // GitHub integration
+  githubListRepos: (token: string) => Promise<GitHubRepo[]>;
+  githubCloneRepo: (cloneUrl: string, fullName: string, token: string) => Promise<string>;
   
   // Gitxplain AI operations
   gitxplainExplain: (repoPath: string, commitRef: string, mode?: string) => Promise<GitxplainResult>;

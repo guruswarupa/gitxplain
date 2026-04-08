@@ -25,13 +25,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getStatus: (path: string) => ipcRenderer.invoke('git-status', path),
   commit: (path: string, message: string, files?: string[]) => 
     ipcRenderer.invoke('git-commit', { path, message, files }),
+  pushCurrentBranch: (path: string) => ipcRenderer.invoke('git-push-current-branch', path),
   isRepo: (path: string) => ipcRenderer.invoke('git-is-repo', path),
   getCurrentBranch: (path: string) => ipcRenderer.invoke('git-current-branch', path),
+  listBranches: (path: string) => ipcRenderer.invoke('git-list-branches', path),
+  checkoutBranch: (path: string, branchName: string) =>
+    ipcRenderer.invoke('git-checkout-branch', { repoPath: path, branchName }),
   
   // Store operations
   storeGet: (key: string) => ipcRenderer.invoke('store-get', key),
   storeSet: (key: string, value: any) => ipcRenderer.invoke('store-set', key, value),
   storeDelete: (key: string) => ipcRenderer.invoke('store-delete', key),
+
+  // GitHub integration
+  githubListRepos: (token: string) => ipcRenderer.invoke('github-list-repos', token),
+  githubCloneRepo: (cloneUrl: string, fullName: string, token: string) =>
+    ipcRenderer.invoke('github-clone-repo', { cloneUrl, fullName, token }),
   
   // Gitxplain AI operations
   gitxplainExplain: (repoPath: string, commitRef: string, mode?: string) => 

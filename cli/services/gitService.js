@@ -315,6 +315,14 @@ export function listCommitsAfter(baseRef, headRef, cwd) {
     .filter(Boolean);
 }
 
+export function listBranchCommits(ref, cwd) {
+  const output = runGitCommand(["rev-list", "--reverse", ref], cwd);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function isAncestorCommit(ancestorRef, descendantRef, cwd) {
   const result = runGitCommandUnchecked(["merge-base", "--is-ancestor", ancestorRef, descendantRef], cwd);
 

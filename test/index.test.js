@@ -50,6 +50,23 @@ test("parseArgs handles split execution flags", () => {
   assert.equal(parsed.dryRun, true);
 });
 
+test("parseArgs handles merge flag execution", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--merge", "--execute"]);
+
+  assert.equal(parsed.mode, "merge");
+  assert.equal(parsed.merge, true);
+  assert.equal(parsed.execute, true);
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles merge subcommand", () => {
+  const parsed = parseArgs(["node", "gitxplain", "merge"]);
+
+  assert.equal(parsed.mergeCommand, true);
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.mode, null);
+});
+
 test("parseArgs handles repository log subcommand", () => {
   const parsed = parseArgs(["node", "gitxplain", "log"]);
 

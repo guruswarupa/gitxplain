@@ -6,13 +6,14 @@ import {
   getMergeBase,
   gitCheckout,
   gitCheckoutNewBranch,
+  gitCherryPick,
+  gitCherryPickAbort,
   gitDeleteBranch,
-  gitMerge,
-  gitMergeAbort,
   gitResetHard,
   isWorkingTreeClean,
-  localBranchExists,
+  listBranchCommits,
   listCommitsAfter,
+  localBranchExists,
   resolveCommitSha,
   runGitCommand
 } from "./gitService.js";
@@ -52,7 +53,7 @@ function stripDiffPrefix(line) {
   return line.slice(1).trim();
 }
 
-function detectVersionChanges(diff) {
+export function detectVersionChanges(diff) {
   const removedVersions = [];
   const addedVersions = [];
 
@@ -99,75 +100,122 @@ function getCommitDiff(ref, cwd) {
   return runGitCommand(["show", "--format=", ref], cwd);
 }
 
-function summarizeVersionPair(change) {
-  const fromText = change.from.join(", ");
-  const toText = change.to.join(", ");
-  return `${fromText} -> ${toText}`;
+function inspectCommit(sha, cwd) {
+  return {
+    sha,
+    shortSha: sha.slice(0, 7),
+    subject: getCommitSubject(sha, cwd),
+    files: getCommitFiles(sha, cwd),
+    versionChange: detectVersionChanges(getCommitDiff(sha, cwd))
+  };
 }
 
-function buildMergeMessage(plan) {
-  const versionLabel =
-    plan.versionChanges.length > 0
-      ? summarizeVersionPair(plan.versionChanges[0])
-      : `${plan.commits.length} release commit${plan.commits.length === 1 ? "" : "s"}`;
+function summarizeVersionPair(change) {
+  return `${change.from.join(", ")} -> ${change.to.join(", ")}`;
+}
 
-  return `merge: release ${versionLabel}`;
+function getLatestVersionSummary(commits) {
+  const latest = [...commits].reverse().find((commit) => commit.versionChange.hasVersionChange) ?? null;
+  return latest ? summarizeVersionPair(latest.versionChange) : null;
+}
+
+function findLastVersionSummaryIndex(commits, targetSummary) {
+  if (!targetSummary) {
+    return -1;
+  }
+
+  for (let index = commits.length - 1; index >= 0; index -= 1) {
+    const commit = commits[index];
+    if (!commit.versionChange.hasVersionChange) {
+      continue;
+    }
+
+    if (summarizeVersionPair(commit.versionChange) === targetSummary) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+export function selectReleaseCommits(sourceCommits, lastReleasedVersionSummary = null) {
+  const latestSourceVersionIndex = [...sourceCommits]
+    .map((commit, index) => ({ commit, index }))
+    .reverse()
+    .find(({ commit }) => commit.versionChange.hasVersionChange)?.index ?? -1;
+
+  if (latestSourceVersionIndex === -1) {
+    return {
+      commitsToApply: [],
+      latestSourceVersionSummary: null,
+      lastReleasedVersionSummary,
+      startIndex: -1,
+      endIndex: -1
+    };
+  }
+
+  const latestSourceVersionSummary = summarizeVersionPair(sourceCommits[latestSourceVersionIndex].versionChange);
+  const lastReleasedIndex = findLastVersionSummaryIndex(sourceCommits, lastReleasedVersionSummary);
+
+  if (lastReleasedIndex === latestSourceVersionIndex) {
+    return {
+      commitsToApply: [],
+      latestSourceVersionSummary,
+      lastReleasedVersionSummary,
+      startIndex: -1,
+      endIndex: latestSourceVersionIndex
+    };
+  }
+
+  const startIndex = lastReleasedIndex + 1;
+  return {
+    commitsToApply: sourceCommits.slice(startIndex, latestSourceVersionIndex + 1),
+    latestSourceVersionSummary,
+    lastReleasedVersionSummary,
+    startIndex,
+    endIndex: latestSourceVersionIndex
+  };
+}
+
+function buildReleaseMessage(plan) {
+  return `release: promote ${plan.latestSourceVersionSummary}`;
 }
 
 export function buildReleaseMergePlan(cwd) {
-  const currentBranch = getCurrentBranchName(cwd);
-  if (currentBranch === RELEASE_BRANCH) {
+  const sourceBranch = getCurrentBranchName(cwd);
+  if (sourceBranch === RELEASE_BRANCH) {
     throw new Error(`Already on "${RELEASE_BRANCH}". Switch to a source branch before running --merge.`);
   }
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
   const mergeBase = getMergeBase(baseRef, "HEAD", cwd);
-  const commitShas = listCommitsAfter(mergeBase, "HEAD", cwd);
-
-  const commits = commitShas
-    .map((sha) => {
-      const diff = getCommitDiff(sha, cwd);
-      const versionChange = detectVersionChanges(diff);
-      return {
-        sha,
-        subject: getCommitSubject(sha, cwd),
-        files: getCommitFiles(sha, cwd),
-        versionChange
-      };
-    })
-    .filter((commit) => commit.versionChange.hasVersionChange);
+  const sourceCommitShas = listCommitsAfter(mergeBase, "HEAD", cwd);
+  const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
+  const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
+  const lastReleasedVersionSummary = getLatestVersionSummary(releaseCommits);
+  const selection = selectReleaseCommits(sourceCommits, lastReleasedVersionSummary);
 
   return {
     releaseBranch: RELEASE_BRANCH,
-    sourceBranch: currentBranch,
+    sourceBranch,
     baseRef,
-    releaseExists,
     mergeBase,
-    commits: commits.map((commit) => ({
-      sha: commit.sha,
-      shortSha: commit.sha.slice(0, 7),
-      subject: commit.subject,
-      files: commit.files,
-      versionChange: commit.versionChange
-    })),
-    versionChanges: unique(
-      commits.map((commit) => summarizeVersionPair(commit.versionChange))
-    ).map((summary) => {
-      const [fromText, toText] = summary.split(" -> ");
-      return {
-        from: fromText.split(", ").filter(Boolean),
-        to: toText.split(", ").filter(Boolean)
-      };
-    }),
-    mergeMessage: null
+    releaseExists,
+    lastReleasedVersionSummary,
+    latestSourceVersionSummary: selection.latestSourceVersionSummary,
+    commits: selection.commitsToApply,
+    startRef: selection.commitsToApply[0]?.shortSha ?? null,
+    endRef: selection.commitsToApply.at(-1)?.shortSha ?? null,
+    createFromRef: releaseExists ? RELEASE_BRANCH : mergeBase,
+    releaseMessage: null
   };
 }
 
 export function finalizeReleaseMergePlan(plan) {
   return {
     ...plan,
-    mergeMessage: buildMergeMessage(plan)
+    releaseMessage: plan.latestSourceVersionSummary ? buildReleaseMessage(plan) : null
   };
 }
 
@@ -176,21 +224,25 @@ export function formatReleaseMergePlan(plan) {
     colorize("Release Merge Plan", ANSI.bold + ANSI.cyan),
     `${colorize("Source Branch:", ANSI.bold + ANSI.cyan)} ${plan.sourceBranch}`,
     `${colorize("Target Branch:", ANSI.bold + ANSI.cyan)} ${plan.releaseBranch}`,
-    `${colorize("Comparison Base:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
-    `${colorize("Merge Commit:", ANSI.bold + ANSI.cyan)} ${plan.mergeMessage}`
+    `${colorize("Base Ref:", ANSI.bold + ANSI.cyan)} ${plan.baseRef}`,
+    `${colorize("Last Released Version:", ANSI.bold + ANSI.cyan)} ${plan.lastReleasedVersionSummary ?? "none"}`,
+    `${colorize("Latest Source Version:", ANSI.bold + ANSI.cyan)} ${plan.latestSourceVersionSummary ?? "none"}`
   ];
 
   if (plan.commits.length === 0) {
-    lines.push(colorize("No release-version commits detected. No merge recommended.", ANSI.green));
+    lines.push(colorize("No new version-bump range detected. Nothing to merge.", ANSI.green));
     return lines.join("\n");
   }
 
-  lines.push(`${colorize("Detected Version Changes:", ANSI.bold + ANSI.cyan)} ${plan.versionChanges.map(summarizeVersionPair).join("; ")}`);
+  lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${plan.startRef}..${plan.endRef}`);
+  lines.push(`${colorize("Release Commit:", ANSI.bold + ANSI.cyan)} ${plan.releaseMessage}`);
 
   for (const commit of plan.commits) {
     lines.push("");
     lines.push(colorize(`${commit.shortSha} ${commit.subject}`, ANSI.bold + ANSI.yellow));
-    lines.push(`${colorize("Versions:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+    if (commit.versionChange.hasVersionChange) {
+      lines.push(`${colorize("Version:", ANSI.bold + ANSI.cyan)} ${summarizeVersionPair(commit.versionChange)}`);
+    }
     lines.push(`${colorize("Files:", ANSI.bold + ANSI.cyan)} ${commit.files.join(", ")}`);
   }
 
@@ -198,11 +250,11 @@ export function formatReleaseMergePlan(plan) {
 }
 
 function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdReleaseBranch }) {
-  const lines = ["Release merge failed. Recovery steps:"];
+  const lines = ["Release promotion failed. Recovery steps:"];
 
   if (createdReleaseBranch) {
     lines.push(`- Return to ${originalBranch} with \`git checkout ${originalBranch}\``);
-    lines.push(`- Delete the temporary release branch with \`git branch -D ${RELEASE_BRANCH}\``);
+    lines.push(`- Delete the temporary ${RELEASE_BRANCH} branch with \`git branch -D ${RELEASE_BRANCH}\``);
     return lines.join("\n");
   }
 
@@ -213,7 +265,7 @@ function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdRelea
 
 export function executeReleaseMerge(plan, cwd) {
   if (plan.commits.length === 0) {
-    throw new Error("No release-version commits detected. Nothing to merge.");
+    throw new Error("No new version-bump range detected. Nothing to merge.");
   }
 
   if (!isWorkingTreeClean(cwd)) {
@@ -221,31 +273,33 @@ export function executeReleaseMerge(plan, cwd) {
   }
 
   const originalBranch = getCurrentBranchName(cwd);
-  const originalHeadSha = getCurrentHeadSha(cwd);
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const originalReleaseSha = releaseExists ? resolveCommitSha(RELEASE_BRANCH, cwd) : null;
+  const originalHeadSha = getCurrentHeadSha(cwd);
 
   try {
     if (releaseExists) {
       gitCheckout(RELEASE_BRANCH, cwd);
     } else {
-      gitCheckoutNewBranch(RELEASE_BRANCH, plan.baseRef, cwd);
+      gitCheckoutNewBranch(RELEASE_BRANCH, plan.createFromRef, cwd);
     }
 
-    gitMerge(plan.sourceBranch, cwd, plan.mergeMessage);
+    for (const commit of plan.commits) {
+      gitCherryPick(commit.sha, cwd);
+    }
   } catch (error) {
-    gitMergeAbort(cwd);
+    gitCherryPickAbort(cwd);
 
     try {
-      if (!releaseExists) {
-        gitCheckout(originalBranch, cwd);
-        gitDeleteBranch(RELEASE_BRANCH, cwd);
-      } else {
+      if (releaseExists) {
         gitResetHard(originalReleaseSha, cwd);
         gitCheckout(originalBranch, cwd);
+      } else {
+        gitCheckout(originalBranch, cwd);
+        gitDeleteBranch(RELEASE_BRANCH, cwd);
       }
     } catch {
-      // Preserve the original failure while still printing recovery guidance below.
+      // Keep the original error and show recovery guidance.
     }
 
     console.error(error.message);
@@ -261,8 +315,8 @@ export function executeReleaseMerge(plan, cwd) {
 
   const updatedReleaseSha = getCurrentHeadSha(cwd);
   if (updatedReleaseSha === originalHeadSha) {
-    throw new Error("Release merge did not create any new history on the release branch.");
+    throw new Error("Release merge did not create any new commits.");
   }
 }
 
-export { RELEASE_BRANCH, detectVersionChanges };
+export { RELEASE_BRANCH };

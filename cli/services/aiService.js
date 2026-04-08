@@ -34,7 +34,7 @@ export function getProviderConfig(providerOverride, modelOverride) {
   if (provider === "groq") {
     return {
       provider,
-      apiKey: process.env.GROQ_API_KEY,
+      apiKey: process.env.GROQ_API_KEY || process.env.GROQ_API,
       baseUrl: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
       model: modelOverride ?? process.env.GROQ_MODEL ?? process.env.LLM_MODEL ?? "llama-3.3-70b-versatile"
     };

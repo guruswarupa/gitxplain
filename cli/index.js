@@ -51,7 +51,7 @@ import {
   formatPreamble
 } from "./services/outputFormatter.js";
 import { executeCommitPlan, formatCommitPlan, parseCommitPlan, reconcileCommitPlan } from "./services/commitService.js";
-import { executeSplit, formatSplitPlan, parseSplitPlan } from "./services/splitService.js";
+import { executeSplit, formatSplitPlan, parseSplitPlan, validateSplitExecutionTarget } from "./services/splitService.js";
 
 const MODE_FLAGS = new Map([
   ["--summary", "summary"],
@@ -730,6 +730,7 @@ export async function main(argv = process.argv) {
     console.log(formatSplitPlan(plan));
 
     if (parsed.execute && !parsed.dryRun) {
+      validateSplitExecutionTarget(commitData.commitId, cwd);
       const confirmed = await askQuestion(
         "\nThis will rewrite git history. Continue? (yes/no) > "
       );

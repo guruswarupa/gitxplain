@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatSplitPlan, parseSplitPlan } from "../cli/services/splitService.js";
+import { formatSplitPlan, parseSplitPlan, validateSplitExecutionTarget } from "../cli/services/splitService.js";
 
 test("parseSplitPlan parses valid JSON", () => {
   const plan = parseSplitPlan(`{
@@ -74,4 +74,28 @@ test("formatSplitPlan renders the expected sections", () => {
   assert.match(output, /1\. feat: add validation helper/);
   assert.match(output, /Files: src\/validation\.js/);
   assert.match(output, /Why: Adds the helper implementation\./);
+});
+
+test("validateSplitExecutionTarget rejects non-HEAD commits", () => {
+  assert.throws(
+    () =>
+      validateSplitExecutionTarget("abc123", "/tmp", {
+        resolveCommitSha: () => "abc123",
+        getCurrentHeadSha: () => "def456",
+        getCommitParents: () => ["parent123"]
+      }),
+    /supports only the current HEAD commit/
+  );
+});
+
+test("validateSplitExecutionTarget rejects merge commits", () => {
+  assert.throws(
+    () =>
+      validateSplitExecutionTarget("abc123", "/tmp", {
+        resolveCommitSha: () => "abc123",
+        getCurrentHeadSha: () => "abc123",
+        getCommitParents: () => ["parent1", "parent2"]
+      }),
+    /supports non-merge commits/
+  );
 });

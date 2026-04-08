@@ -130,6 +130,13 @@ export function gitCommit(message, cwd) {
   return runGitCommand(["commit", "-m", message], cwd);
 }
 
+export function getRepositoryLog(cwd, limit = 20, runner = runGitCommand) {
+  return runner(
+    ["log", `--max-count=${limit}`, "--date=short", "--pretty=format:%h %ad %an %s"],
+    cwd
+  );
+}
+
 function fetchSingleCommitData(commitId, cwd, runner) {
   const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
   const diff = runner(["diff", `${commitId}^!`], cwd);

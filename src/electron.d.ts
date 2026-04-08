@@ -55,6 +55,9 @@ export interface ElectronAPI {
   gitxplainSecurity: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
   gitxplainLines: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
   gitxplainBranch: (repoPath: string, baseRef: string, mode?: string) => Promise<GitxplainResult>;
+  gitxplainInstallHook: (repoPath: string, hookName?: string) => Promise<GitxplainResult>;
+  gitxplainSplitPreview: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
+  gitxplainSplitExecute: (repoPath: string, commitRef: string) => Promise<GitxplainResult>;
 }
 
 declare global {

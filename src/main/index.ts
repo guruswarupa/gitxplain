@@ -53,7 +53,7 @@ app.on('activate', () => {
 });
 
 // Initialize electron-store for persistent settings
-const store = new Store();
+const store = new Store() as any;
 
 // IPC handlers
 ipcMain.handle('get-app-path', () => {
@@ -215,10 +215,12 @@ ipcMain.handle('store-delete', (event, key) => {
 interface GitxplainOptions {
   repoPath: string;
   commitRef: string;
-  mode: 'summary' | 'full' | 'review' | 'security' | 'lines' | 'issues' | 'fix' | 'impact';
+  mode: 'summary' | 'full' | 'review' | 'security' | 'lines' | 'issues' | 'fix' | 'impact' | 'split';
   format?: 'plain' | 'json' | 'markdown' | 'html';
   provider?: string;
   model?: string;
+  extraArgs?: string[];
+  stdinText?: string;
 }
 
 // Helper to run gitxplain CLI as subprocess
@@ -241,6 +243,9 @@ function runGitxplain(options: GitxplainOptions): Promise<{ output: string; erro
     }
     if (options.model) {
       args.push('--model', options.model);
+    }
+    if (options.extraArgs && options.extraArgs.length > 0) {
+      args.push(...options.extraArgs);
     }
     
     // Get API keys from store
@@ -276,6 +281,11 @@ function runGitxplain(options: GitxplainOptions): Promise<{ output: string; erro
     proc.stderr.on('data', (data) => {
       stderr += data.toString();
     });
+
+    if (options.stdinText) {
+      proc.stdin.write(options.stdinText);
+      proc.stdin.end();
+    }
     
     proc.on('close', (code) => {
       if (code === 0) {
@@ -287,6 +297,54 @@ function runGitxplain(options: GitxplainOptions): Promise<{ output: string; erro
     
     proc.on('error', (err) => {
       reject(new Error(`Failed to run gitxplain: ${err.message}`));
+    });
+  });
+}
+
+function runGitxplainCommand(repoPath: string, args: string[]): Promise<{ output: string; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const settings = store.get('settings') as any || {};
+    const aiSettings = settings.ai || {};
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      LLM_PROVIDER: aiSettings.provider || 'openai',
+      LLM_MODEL: aiSettings.model || undefined,
+      OPENAI_API_KEY: aiSettings.openaiKey || undefined,
+      GROQ_API_KEY: aiSettings.groqKey || undefined,
+      OPENROUTER_API_KEY: aiSettings.openrouterKey || undefined,
+      GEMINI_API_KEY: aiSettings.geminiKey || undefined,
+      CHUTES_API_KEY: aiSettings.chutesKey || undefined,
+      OLLAMA_BASE_URL: aiSettings.ollamaBaseUrl || undefined,
+    };
+
+    const proc = spawn('node', [GITXPLAIN_CLI, ...args], {
+      cwd: repoPath,
+      env,
+      shell: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ output: stdout.trim() });
+      } else {
+        resolve({ output: stdout.trim(), error: stderr.trim() || 'Command failed' });
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to run gitxplain command: ${err.message}`));
     });
   });
 }
@@ -386,5 +444,51 @@ ipcMain.handle('gitxplain-branch', async (event, { repoPath, baseRef, mode = 'fu
   } catch (error: any) {
     console.error('Gitxplain branch error:', error);
     throw new Error(`Failed to analyze branch: ${error.message}`);
+  }
+});
+
+// Install git hook for current repository
+ipcMain.handle('gitxplain-install-hook', async (event, { repoPath, hookName = 'post-commit' }) => {
+  try {
+    const result = await runGitxplainCommand(repoPath, ['install-hook', hookName]);
+    return result;
+  } catch (error: any) {
+    console.error('Gitxplain install-hook error:', error);
+    throw new Error(`Failed to install hook: ${error.message}`);
+  }
+});
+
+// Commit split preview
+ipcMain.handle('gitxplain-split-preview', async (event, { repoPath, commitRef }) => {
+  try {
+    const result = await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'split',
+      format: 'plain',
+      extraArgs: ['--dry-run'],
+    });
+    return result;
+  } catch (error: any) {
+    console.error('Gitxplain split preview error:', error);
+    throw new Error(`Failed to generate split preview: ${error.message}`);
+  }
+});
+
+// Commit split execution with explicit confirmation
+ipcMain.handle('gitxplain-split-execute', async (event, { repoPath, commitRef }) => {
+  try {
+    const result = await runGitxplain({
+      repoPath,
+      commitRef,
+      mode: 'split',
+      format: 'plain',
+      extraArgs: ['--execute'],
+      stdinText: 'yes\n',
+    });
+    return result;
+  } catch (error: any) {
+    console.error('Gitxplain split execute error:', error);
+    throw new Error(`Failed to execute split: ${error.message}`);
   }
 });

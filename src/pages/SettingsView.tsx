@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Settings, Key, Cpu, Check, AlertCircle, Eye, EyeOff, Save } from 'lucide-react';
+import { useCommitStoryStore } from '../store/commitStoryStore';
 
 interface AISettings {
   provider: string;
@@ -27,6 +28,7 @@ const PROVIDERS = [
 ];
 
 export default function SettingsView() {
+  const { currentProject } = useCommitStoryStore();
   const [settings, setSettings] = useState<AISettings>({
     provider: 'openai',
     model: 'gpt-4.1-mini',
@@ -41,6 +43,8 @@ export default function SettingsView() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [installingHook, setInstallingHook] = useState(false);
+  const [hookStatus, setHookStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -80,6 +84,34 @@ export default function SettingsView() {
 
   const toggleShowKey = (keyId: string) => {
     setShowKeys(prev => ({ ...prev, [keyId]: !prev[keyId] }));
+  };
+
+  const handleInstallHook = async () => {
+    if (!currentProject) return;
+
+    setInstallingHook(true);
+    setHookStatus(null);
+    try {
+      const result = await window.electronAPI.gitxplainInstallHook(currentProject.path, 'post-commit');
+      if (result.error) {
+        setHookStatus({
+          type: 'error',
+          message: result.error,
+        });
+      } else {
+        setHookStatus({
+          type: 'success',
+          message: result.output || 'Installed post-commit hook successfully.',
+        });
+      }
+    } catch (error: any) {
+      setHookStatus({
+        type: 'error',
+        message: error.message || 'Failed to install hook.',
+      });
+    } finally {
+      setInstallingHook(false);
+    }
   };
 
   const currentProvider = PROVIDERS.find(p => p.id === settings.provider);
@@ -292,6 +324,33 @@ export default function SettingsView() {
               Ollama runs locally - no API key needed
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* Git Hooks */}
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold mb-4">Git Hooks</h2>
+        <div className="p-4 border border-border rounded-lg bg-card">
+          <p className="text-sm text-muted-foreground mb-4">
+            Install the gitxplain post-commit hook for this repository to automate commit explanations.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleInstallHook}
+              disabled={!currentProject || installingHook}
+              className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {installingHook ? 'Installing...' : 'Install Post-Commit Hook'}
+            </button>
+            {!currentProject && (
+              <span className="text-xs text-muted-foreground">Select a repository to enable hook installation.</span>
+            )}
+          </div>
+          {hookStatus && (
+            <p className={`mt-3 text-sm ${hookStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+              {hookStatus.message}
+            </p>
+          )}
         </div>
       </div>
 

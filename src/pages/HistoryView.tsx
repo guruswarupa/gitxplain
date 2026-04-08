@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2 } from 'lucide-react';
+import { GitCommit, User, Calendar, FileText, Sparkles, Shield, Eye, Code2, Scissors } from 'lucide-react';
 import { useCommitStoryStore } from '../store/commitStoryStore';
 import { Commit } from '../models';
 import SearchBar from '../components/SearchBar';
@@ -16,6 +16,7 @@ export default function HistoryView() {
     searchQuery,
     selectedCommit,
     setSelectedCommit,
+    setCommits,
     commitsLoading,
     currentProject,
   } = useCommitStoryStore();
@@ -26,6 +27,11 @@ export default function HistoryView() {
   const [aiExplanation, setAiExplanation] = useState<string>('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiMode, setAiMode] = useState<string>('');
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [splitPreview, setSplitPreview] = useState('');
+  const [splitLoading, setSplitLoading] = useState(false);
+  const [splitExecuting, setSplitExecuting] = useState(false);
+  const [splitError, setSplitError] = useState<string>('');
 
   const handleCommitClick = (commit: Commit) => {
     setSelectedCommit(commit);
@@ -127,6 +133,62 @@ export default function HistoryView() {
       setAiExplanation(`**Failed to get line-by-line explanation:** ${error.message}`);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const openSplitModal = async () => {
+    if (!selectedCommit || !currentProject) return;
+
+    setShowSplitModal(true);
+    setSplitLoading(true);
+    setSplitError('');
+    setSplitPreview('');
+
+    try {
+      const result = await window.electronAPI.gitxplainSplitPreview(
+        currentProject.path,
+        selectedCommit.hash
+      );
+
+      if (result.error) {
+        setSplitError(result.error);
+      } else {
+        setSplitPreview(result.output || 'No split preview output returned.');
+      }
+    } catch (error: any) {
+      setSplitError(error.message || 'Failed to generate split preview.');
+    } finally {
+      setSplitLoading(false);
+    }
+  };
+
+  const executeSplit = async () => {
+    if (!selectedCommit || !currentProject) return;
+
+    setSplitExecuting(true);
+    setSplitError('');
+    try {
+      const result = await window.electronAPI.gitxplainSplitExecute(
+        currentProject.path,
+        selectedCommit.hash
+      );
+
+      if (result.error) {
+        setSplitError(result.error);
+        return;
+      }
+
+      if (result.output) {
+        setSplitPreview(result.output);
+      }
+
+      const refreshedCommits = await window.electronAPI.getLog(currentProject.path, { maxCount: 500 });
+      setCommits(refreshedCommits);
+      setSelectedCommit(null);
+    } catch (error: any) {
+      setSplitError(error.message || 'Failed to execute split.');
+    } finally {
+      setSplitExecuting(false);
     }
   };
 
@@ -311,6 +373,14 @@ export default function HistoryView() {
                   <Code2 className="w-4 h-4" />
                   Line-by-Line
                 </button>
+                <button
+                  onClick={openSplitModal}
+                  disabled={aiLoading || splitLoading || splitExecuting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:opacity-50 border border-border hover:bg-accent"
+                >
+                  <Scissors className="w-4 h-4" />
+                  Split Commit
+                </button>
               </div>
             </div>
 
@@ -384,6 +454,57 @@ export default function HistoryView() {
           </div>
         )}
       </div>
+
+      {showSplitModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg w-full max-w-3xl max-h-[85vh] overflow-hidden">
+            <div className="p-4 border-b border-border">
+              <h3 className="text-lg font-semibold">Split Commit Preview</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                This operation rewrites history. Use only on branches where force-push is acceptable.
+              </p>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              {splitLoading && (
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  Generating split plan...
+                </div>
+              )}
+
+              {splitError && !splitLoading && (
+                <div className="p-3 rounded-md border border-red-500/40 bg-red-500/10 text-red-700 text-sm">
+                  {splitError}
+                </div>
+              )}
+
+              {!splitLoading && !splitError && (
+                <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-md overflow-x-auto">
+                  {splitPreview}
+                </pre>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowSplitModal(false)}
+                disabled={splitExecuting}
+                className="px-4 py-2 border border-border rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+              >
+                Close
+              </button>
+              <button
+                onClick={executeSplit}
+                disabled={splitLoading || splitExecuting || !!splitError}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {splitExecuting ? 'Executing Split...' : 'Execute Split'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

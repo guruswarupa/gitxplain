@@ -46,4 +46,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('gitxplain-lines', { repoPath, commitRef }),
   gitxplainBranch: (repoPath: string, baseRef: string, mode?: string) => 
     ipcRenderer.invoke('gitxplain-branch', { repoPath, baseRef, mode }),
+  gitxplainInstallHook: (repoPath: string, hookName?: string) =>
+    ipcRenderer.invoke('gitxplain-install-hook', { repoPath, hookName }),
+  gitxplainSplitPreview: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-split-preview', { repoPath, commitRef }),
+  gitxplainSplitExecute: (repoPath: string, commitRef: string) =>
+    ipcRenderer.invoke('gitxplain-split-execute', { repoPath, commitRef }),
 });

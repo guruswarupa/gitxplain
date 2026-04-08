@@ -1,5 +1,6 @@
 import process from "node:process";
 import {
+  createEmptyRootCommit,
   getCurrentBranchName,
   getCurrentHeadSha,
   getDefaultBaseRef,
@@ -138,22 +139,42 @@ function getReleasedVersions(releaseCommits) {
 
 export function buildReleaseWindows(sourceCommits) {
   const windows = [];
-  let pendingCommits = [];
+  let windowStartIndex = 0;
+  let activeVersion = null;
 
-  for (const commit of sourceCommits) {
-    pendingCommits.push(commit);
-
+  for (let index = 0; index < sourceCommits.length; index += 1) {
+    const commit = sourceCommits[index];
     if (!commit.releaseVersion) {
       continue;
     }
 
+    if (activeVersion == null) {
+      activeVersion = commit.releaseVersion;
+      continue;
+    }
+
+    if (commit.releaseVersion === activeVersion) {
+      continue;
+    }
+
+    const previousIndex = index - 1;
     windows.push({
-      version: commit.releaseVersion,
-      commits: pendingCommits,
-      startRef: pendingCommits[0]?.shortSha ?? null,
-      endRef: commit.shortSha
+      version: activeVersion,
+      commits: sourceCommits.slice(windowStartIndex, previousIndex + 1),
+      startRef: sourceCommits[windowStartIndex]?.shortSha ?? null,
+      endRef: sourceCommits[previousIndex]?.shortSha ?? null
     });
-    pendingCommits = [];
+    windowStartIndex = index;
+    activeVersion = commit.releaseVersion;
+  }
+
+  if (activeVersion != null) {
+    windows.push({
+      version: activeVersion,
+      commits: sourceCommits.slice(windowStartIndex),
+      startRef: sourceCommits[windowStartIndex]?.shortSha ?? null,
+      endRef: sourceCommits.at(-1)?.shortSha ?? null
+    });
   }
 
   return windows;
@@ -186,8 +207,8 @@ export function buildReleaseMergePlan(cwd) {
 
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const baseRef = releaseExists ? RELEASE_BRANCH : getDefaultBaseRef(cwd);
-  const mergeBase = getMergeBase(baseRef, "HEAD", cwd);
-  const sourceCommitShas = listCommitsAfter(mergeBase, "HEAD", cwd);
+  const mergeBase = releaseExists ? getMergeBase(baseRef, "HEAD", cwd) : null;
+  const sourceCommitShas = releaseExists ? listCommitsAfter(mergeBase, "HEAD", cwd) : listBranchCommits("HEAD", cwd);
   const sourceCommits = sourceCommitShas.map((sha) => inspectCommit(sha, cwd));
   const releaseCommits = releaseExists ? listBranchCommits(RELEASE_BRANCH, cwd).map((sha) => inspectCommit(sha, cwd)) : [];
   const selection = selectReleaseWindows(sourceCommits, releaseCommits);
@@ -201,7 +222,7 @@ export function buildReleaseMergePlan(cwd) {
     releasedVersions: selection.releasedVersions,
     latestDetectedVersion: selection.latestDetectedVersion,
     windows: selection.windows,
-    createFromRef: releaseExists ? RELEASE_BRANCH : mergeBase
+    createFromRef: releaseExists ? RELEASE_BRANCH : null
   };
 }
 
@@ -277,7 +298,8 @@ export function executeReleaseMerge(plan, cwd) {
     if (releaseExists) {
       gitCheckout(RELEASE_BRANCH, cwd);
     } else {
-      gitCheckoutNewBranch(RELEASE_BRANCH, plan.createFromRef, cwd);
+      const emptyRootCommit = createEmptyRootCommit("chore: initialize release branch", cwd);
+      gitCheckoutNewBranch(RELEASE_BRANCH, emptyRootCommit, cwd);
     }
 
     for (const window of plan.windows) {

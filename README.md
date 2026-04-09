@@ -158,24 +158,12 @@ Then from any Git repository:
 
 ```bash
 gitxplain help
-gitxplain --connect-github <token>
-gitxplain --boot
 gitxplain HEAD~1 --full
 gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
 gitxplain HEAD~5..HEAD --markdown
 gitxplain --branch main --review
 ```
-
-Inside `gitxplain --boot`, the session now prints the available interactive commands on startup. You can also type `help` at any time to re-display:
-
-- `help`
-- `repos`
-- `issues`
-- `status`
-- `download`
-- `clear`
-- `exit`
 
 The `gitxplain help` command also prints quick API-key setup examples for:
 
@@ -215,6 +203,18 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--json`: return structured JSON instead of formatted text
 - `--markdown`: return Markdown output
 - `--html`: return HTML output
+
+## GitHub Companion
+
+GitHub authentication, repository browsing, issues, pull requests, commit browsing, cloning, and the interactive boot session now live in the sibling CLI project `ghxplain`.
+
+Use:
+
+```bash
+cd /home/guru/Dev/ghxplain
+npm link
+ghxplain help
+```
 
 If no analysis flag is supplied, the CLI asks what kind of explanation you want.
 

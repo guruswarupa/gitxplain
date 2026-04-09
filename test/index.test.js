@@ -174,6 +174,14 @@ test("parseArgs handles pipeline subcommand", () => {
   assert.equal(parsed.nativeGitCommand, false);
 });
 
+test("parseArgs handles pipeline flag", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--pipeline"]);
+
+  assert.equal(parsed.pipelineCommand, true);
+  assert.equal(parsed.mode, "pipeline");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles add command with multiple paths", () => {
   const parsed = parseArgs(["node", "gitxplain", "add", "README.md", "cli/index.js"]);
 

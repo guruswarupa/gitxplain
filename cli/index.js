@@ -84,7 +84,8 @@ const MODE_FLAGS = new Map([
   ["--tag", "tag"],
   ["--commit", "commit"],
   ["--log", "log"],
-  ["--status", "status"]
+  ["--status", "status"],
+  ["--pipeline", "pipeline"]
 ]);
 
 const FORMAT_FLAGS = new Map([
@@ -134,7 +135,7 @@ Git:
   gitxplain --log
   gitxplain status
   gitxplain --status
-  gitxplain pipeline
+  gitxplain --pipeline
   gitxplain add <path> [more-paths...]
   gitxplain remove <path> [more-paths...]
   gitxplain remove hard
@@ -182,7 +183,7 @@ Modes:
   --commit     Propose commits for current uncommitted changes
   --log        Print Git log entries for the current repository
   --status     Print Git working tree status for the current repository
-  pipeline     Detect the current repository stack and create CI/CD workflow files
+  --pipeline   Detect the current repository stack and create CI/CD workflow files
   --execute    Execute a proposed split or commit plan
   --dry-run    Preview the plan without executing it (default for --split and --commit)
 
@@ -283,6 +284,7 @@ Examples:
   gitxplain status
   gitxplain --status
   gitxplain pipeline
+  gitxplain --pipeline
   gitxplain add README.md
   gitxplain remove README.md
   gitxplain remove hard
@@ -383,7 +385,7 @@ export function parseArgs(argv, options = {}) {
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
-  const isPipelineCommand = subcommand === "pipeline";
+  const isPipelineCommand = subcommand === "pipeline" || flags.has("--pipeline");
   const isBinCommand = subcommand === "bin";
   const isPopCommand = subcommand === "pop";
   const isPullCommand = subcommand === "pull";

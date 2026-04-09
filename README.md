@@ -18,6 +18,7 @@ Supported providers:
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports release-branch merge previews driven by detected version bumps in diffs
 - Supports automatic release tagging driven by the same version-bump detection used for release merges
+- Supports release health status checks that show missing tags, unmerged version bumps, branch drift, and next steps
 - Supports AI-assisted commit planning for uncommitted working tree changes
 - Supports quick repository log output for full history inspection
 - Supports repository-aware CI/CD workflow generation for the repo you are currently in
@@ -74,6 +75,8 @@ gitxplain merge
 gitxplain --merge
 gitxplain tag
 gitxplain --tag
+gitxplain release
+gitxplain release status
 gitxplore tag
 gitxplore --tag
 gitxplain log --log
@@ -202,6 +205,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--split`: propose how to split a commit into multiple atomic commits
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--tag`: preview or create release tags from the same detected version windows
+- `release status`: inspect release branch health, missing tags, source-vs-release drift, and the next recommended action
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository

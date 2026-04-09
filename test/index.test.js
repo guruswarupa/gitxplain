@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildBootSessionArgs, parseArgs } from "../cli/index.js";
-import { getBootHelpText } from "../cli/services/chatService.js";
+import { parseArgs } from "../cli/index.js";
 
 test("parseArgs handles commit mode and provider overrides", () => {
   const parsed = parseArgs([
@@ -69,14 +68,6 @@ test("parseArgs handles help and install-hook commands", () => {
   const hookParsed = parseArgs(["node", "gitxplain", "install-hook", "post-commit"]);
   assert.equal(hookParsed.installHook, true);
   assert.equal(hookParsed.hookName, "post-commit");
-});
-
-test("parseArgs handles GitHub connect flag", () => {
-  const parsed = parseArgs(["node", "gitxplain", "--connect-github", "github_pat_test"]);
-
-  assert.equal(parsed.connectGitHub, true);
-  assert.equal(parsed.connectToken, "github_pat_test");
-  assert.equal(parsed.commitRef, null);
 });
 
 test("parseArgs handles empty invocation", () => {
@@ -273,38 +264,4 @@ test("parseArgs handles commit subcommand and flag", () => {
   const flagParsed = parseArgs(["node", "gitxplain", "--commit", "--execute"]);
   assert.equal(flagParsed.mode, "commit");
   assert.equal(flagParsed.execute, true);
-});
-
-test("buildBootSessionArgs preserves provider/model and username in the correct slots", () => {
-  const sessionArgs = buildBootSessionArgs(
-    {
-      token: "ghp_test",
-      user: { login: "guruswarupa" }
-    },
-    { name: "Guru Swarupa" },
-    {
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    }
-  );
-
-  assert.deepEqual(sessionArgs, {
-    token: "ghp_test",
-    providerOverride: "groq",
-    modelOverride: "llama-3.3-70b-versatile",
-    username: "Guru Swarupa"
-  });
-});
-
-test("getBootHelpText lists interactive boot commands", () => {
-  const helpText = getBootHelpText();
-
-  assert.match(helpText, /Available commands:/);
-  assert.match(helpText, /help\s+Show this command list/);
-  assert.match(helpText, /repos\s+Select a GitHub repository and commit for analysis/);
-  assert.match(helpText, /issues\s+Summarize open issues for the selected repository/);
-  assert.match(helpText, /status\s+Review local uncommitted git diff/);
-  assert.match(helpText, /download\s+Download the selected repository at the selected commit/);
-  assert.match(helpText, /clear\s+Reset the current chat history/);
-  assert.match(helpText, /exit\s+Close the interactive session/);
 });

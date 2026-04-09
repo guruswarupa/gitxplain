@@ -1,26 +1,22 @@
 import process from "node:process";
 import {
-  deletePaths,
+  createCommitFromTree,
+  getCommitMetadata,
   getCurrentBranchName,
-  getCurrentHeadSha,
   getDefaultBaseRef,
   getMergeBase,
   gitCheckout,
-  gitCheckoutOrphan,
-  gitCherryPickAbort,
-  gitCherryPickNoCommit,
-  gitCommit,
+  gitCreateBranch,
   gitCreateAnnotatedTag,
   gitDeleteBranch,
+  gitForceBranch,
   gitDeleteTag,
-  gitRemoveCachedAll,
-  gitResetHard,
   isWorkingTreeClean,
   listBranchCommits,
   listCommitsAfter,
-  listFilesInRef,
   listTags,
   localBranchExists,
+  resolveTreeSha,
   resolveCommitSha,
   runGitCommand
 } from "./gitService.js";
@@ -511,6 +507,15 @@ function buildRecoveryMessage({ originalBranch, originalReleaseSha, createdRelea
   return lines.join("\n");
 }
 
+function buildReleaseCommitMetadata(ref, version, cwd) {
+  const metadata = getCommitMetadata(ref, cwd);
+
+  return {
+    ...metadata,
+    message: `release ${version}`
+  };
+}
+
 export function executeReleaseMerge(plan, cwd) {
   if (plan.windows.length === 0) {
     throw new Error("No unreleased release commits detected. Nothing to merge.");
@@ -523,35 +528,49 @@ export function executeReleaseMerge(plan, cwd) {
   const originalBranch = getCurrentBranchName(cwd);
   const releaseExists = localBranchExists(RELEASE_BRANCH, cwd);
   const originalReleaseSha = releaseExists ? resolveCommitSha(RELEASE_BRANCH, cwd) : null;
-  const originalHeadSha = getCurrentHeadSha(cwd);
-  const originalHeadFiles = releaseExists ? [] : listFilesInRef("HEAD", cwd);
+  let updatedReleaseSha = originalReleaseSha;
 
   try {
-    if (releaseExists) {
-      gitCheckout(RELEASE_BRANCH, cwd);
-    } else {
-      gitCheckoutOrphan(RELEASE_BRANCH, cwd);
-      gitRemoveCachedAll(cwd);
-      deletePaths(originalHeadFiles, cwd);
-    }
-
     for (const window of plan.windows) {
-      for (const commit of window.commits) {
-        gitCherryPickNoCommit(commit.sha, cwd);
+      const targetCommit = window.commits.at(-1);
+      if (targetCommit?.sha == null) {
+        throw new Error(`Unable to determine the source commit for release ${window.version}.`);
       }
 
-      gitCommit(`release ${window.version}`, cwd);
+      const treeSha = resolveTreeSha(targetCommit.sha, cwd);
+      const metadata = buildReleaseCommitMetadata(targetCommit.sha, window.version, cwd);
+      updatedReleaseSha = createCommitFromTree(
+        treeSha,
+        updatedReleaseSha == null ? [] : [updatedReleaseSha],
+        metadata,
+        cwd
+      );
     }
-  } catch (error) {
-    gitCherryPickAbort(cwd);
 
+    if (updatedReleaseSha == null || updatedReleaseSha === originalReleaseSha) {
+      throw new Error("Release merge did not create any new commits.");
+    }
+
+    if (releaseExists) {
+      gitForceBranch(RELEASE_BRANCH, updatedReleaseSha, cwd);
+    } else {
+      gitCreateBranch(RELEASE_BRANCH, updatedReleaseSha, cwd);
+    }
+
+    gitCheckout(RELEASE_BRANCH, cwd);
+  } catch (error) {
     try {
       if (releaseExists) {
-        gitResetHard(originalReleaseSha, cwd);
-        gitCheckout(originalBranch, cwd);
-      } else {
-        gitCheckout(originalBranch, cwd);
+        gitForceBranch(RELEASE_BRANCH, originalReleaseSha, cwd);
+      } else if (localBranchExists(RELEASE_BRANCH, cwd)) {
+        if (getCurrentBranchName(cwd) === RELEASE_BRANCH) {
+          gitCheckout(originalBranch, cwd);
+        }
         gitDeleteBranch(RELEASE_BRANCH, cwd);
+      }
+
+      if (getCurrentBranchName(cwd) !== originalBranch) {
+        gitCheckout(originalBranch, cwd);
       }
     } catch {
       // Preserve original failure and print recovery guidance below.
@@ -566,11 +585,6 @@ export function executeReleaseMerge(plan, cwd) {
       })
     );
     throw new Error("Release merge aborted.");
-  }
-
-  const updatedReleaseSha = getCurrentHeadSha(cwd);
-  if (updatedReleaseSha === originalHeadSha) {
-    throw new Error("Release merge did not create any new commits.");
   }
 }
 

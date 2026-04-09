@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -444,6 +444,93 @@ test("executeReleaseMerge applies every unreleased window onto an existing relea
     assert.deepEqual(plan.windows.map((window) => window.version), ["0.1.2", "0.1.3"]);
 
     executeReleaseMerge(plan, repoDir);
+
+    const releaseSubjects = runGit("log", "--format=%s", "release")
+      .split("\n")
+      .filter(Boolean);
+
+    assert.deepEqual(releaseSubjects, ["release 0.1.3", "release 0.1.2", "release 0.1.1", "release 0.1.0"]);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("executeReleaseMerge can advance a legacy release branch whose tree no longer matches main", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-release-legacy-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+
+    writeFileSync(
+      path.join(repoDir, "package.json"),
+      `${JSON.stringify({ name: "gitxplain", version: "0.1.1", scripts: { test: "node --test" } }, null, 2)}\n`
+    );
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    writeFileSync(
+      path.join(repoDir, "package.json"),
+      `${JSON.stringify({ name: "gitxplain", version: "0.1.2", scripts: { test: "node --test", lint: "node --check cli/index.js" } }, null, 2)}\n`
+    );
+    writeFileSync(path.join(repoDir, "README.md"), "release notes for 0.1.2\n");
+    runGit("add", "package.json", "README.md");
+    runGit("commit", "-m", "chore: bump version to 0.1.2");
+
+    runGit("checkout", "--orphan", "release");
+    runGit("rm", "-r", "--cached", "--ignore-unmatch", ".");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "release 0.1.0");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "release 0.1.1");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.2" }, null, 2)}\n`);
+    runGit("commit", "-am", "release 0.1.2");
+    runGit("clean", "-fd");
+    runGit("checkout", "main");
+
+    writeFileSync(
+      path.join(repoDir, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "gitxplain",
+          version: "0.1.3",
+          scripts: {
+            test: "node --test",
+            lint: "node --check cli/index.js && node --check cli/services/pipelineService.js"
+          }
+        },
+        null,
+        2
+      )}\n`
+    );
+    writeFileSync(path.join(repoDir, "README.md"), "release notes for 0.1.3\n");
+    mkdirSync(path.join(repoDir, "cli"), { recursive: true });
+    writeFileSync(path.join(repoDir, "cli/index.js"), "console.log('0.1.3');\n");
+    runGit("add", "package.json", "README.md", "cli/index.js");
+    runGit("commit", "-m", "chore: bump version to 0.1.3");
+
+    const sourceHeadSha = runGit("rev-parse", "HEAD");
+    const plan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(plan, repoDir);
+
+    assert.equal(runGit("rev-parse", "--abbrev-ref", "HEAD"), "release");
+    assert.equal(runGit("show", "release:package.json"), runGit("show", `${sourceHeadSha}:package.json`));
+    assert.equal(runGit("show", "release:README.md"), runGit("show", `${sourceHeadSha}:README.md`));
+    assert.equal(runGit("show", "release:cli/index.js"), runGit("show", `${sourceHeadSha}:cli/index.js`));
 
     const releaseSubjects = runGit("log", "--format=%s", "release")
       .split("\n")

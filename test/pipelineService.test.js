@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -47,6 +47,43 @@ test("inspectRepositoryForPipeline detects a node repository and release support
     assert.equal(analysis.primary.commands.build, "npm run build");
     assert.equal(analysis.primary.commands.pack, "npm pack --dry-run");
     assert.equal(analysis.options.some((option) => option.id === "ci-release"), true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("inspectRepositoryForPipeline detects an Android Gradle repository", () => {
+  const cwd = createTempRepo();
+
+  try {
+    writeFileSync(path.join(cwd, "settings.gradle.kts"), 'rootProject.name = "launch"\ninclude(":app")\n');
+    writeFileSync(path.join(cwd, "build.gradle.kts"), "plugins {}\n");
+    writeFileSync(path.join(cwd, "gradlew"), "#!/bin/sh\n");
+    mkdirSync(path.join(cwd, "app"), { recursive: true });
+    writeFileSync(
+      path.join(cwd, "app", "build.gradle.kts"),
+      [
+        "plugins {",
+        "  alias(libs.plugins.android.application)",
+        "  alias(libs.plugins.kotlin.android)",
+        "}",
+        "",
+        "android {",
+        '  namespace = "com.example.launch"',
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const analysis = inspectRepositoryForPipeline(cwd);
+
+    assert.equal(analysis.supported, true);
+    assert.equal(analysis.primary.type, "gradle-android");
+    assert.equal(analysis.primary.commands.lint, "./gradlew :app:lintDebug");
+    assert.equal(analysis.primary.commands.test, "./gradlew :app:testDebugUnitTest");
+    assert.equal(analysis.primary.commands.build, "./gradlew :app:assembleDebug");
+    assert.equal(analysis.options.some((option) => option.id === "ci"), true);
+    assert.equal(analysis.options.some((option) => option.id === "ci-release"), false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

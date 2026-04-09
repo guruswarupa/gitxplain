@@ -5,15 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
-import { startChatSession } from "./services/chatService.js";
 import { loadEnvFile } from "./services/envLoader.js";
-import {
-  saveGitConnection,
-  isGitConnected,
-  loadGitConnection,
-  getGitUserInfo,
-  verifyGitToken
-} from "./services/gitConnectionService.js";
 import { copyToClipboard } from "./services/clipboardService.js";
 import { loadConfig } from "./services/configService.js";
 import {
@@ -151,10 +143,6 @@ Git:
   gitxplain push [remote] [branch]
   gitxplain install-hook [hook-name]
 
-GitHub:
-  gitxplain --connect-github [token]
-  gitxplain --boot [options]
-
 Analysis:
   gitxplain <commit-id> [options]
   gitxplain <start>..<end> [options]
@@ -213,10 +201,6 @@ Output:
   --clipboard  Copy the final output to the system clipboard
   --stream     Stream model output as it is generated when supported
 
-GitHub:
-  --connect-github Save your GitHub Personal Access Token to act autonomously inside Chat
-  --boot            Launch an interactive chat session for dynamic querying, PR creation, and cloning
-
 Providers:
   --provider   LLM provider: openai, groq, openrouter, gemini, ollama, chutes
   --model      Override the model name
@@ -273,8 +257,6 @@ function printExamples() {
   console.log(`gitxplain examples
 
 Examples:
-  gitxplain --connect-github <token>
-  gitxplain --boot
   gitxplain HEAD~1 --full
   gitxplain HEAD~1 --review
   gitxplain HEAD~5..HEAD --markdown
@@ -384,8 +366,6 @@ export function parseArgs(argv, options = {}) {
   const isInstallHook = subcommand === "install-hook";
   const isExample = flags.has("--example") || subcommand === "example";
   const isNativeGitWrapper = subcommand === "git";
-  const isConnectGitHub = flags.has("--connect-github") || flags.has("--connect-git");
-  const isBoot = flags.has("--boot");
   const isLogCommand = subcommand === "log";
   const isStatusCommand = subcommand === "status";
   const isCommitCommand = subcommand === "commit";
@@ -409,8 +389,6 @@ export function parseArgs(argv, options = {}) {
     example: isExample,
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
-    connectGitHub: isConnectGitHub,
-    boot: isBoot,
     logCommand: isLogCommand,
     statusCommand: isStatusCommand,
     commitCommand: isCommitCommand,
@@ -431,7 +409,6 @@ export function parseArgs(argv, options = {}) {
     hookName: isInstallHook ? positional[1] ?? "post-commit" : null,
     actionPaths:
       isAddCommand || isDeleteCommand ? positional.slice(1) : isRemoveHardCommand ? [] : isRemoveCommand ? positional.slice(1) : [],
-    connectToken: isConnectGitHub ? positional[0] : null,
     stashIndex: isPopCommand ? positional[1] ?? null : null,
     pullRemote: isPullCommand ? positional[1] ?? null : null,
     pullBranch: isPullCommand ? positional[2] ?? null : null,
@@ -441,8 +418,6 @@ export function parseArgs(argv, options = {}) {
       isInstallHook ||
       isExample ||
       isNativeGitCommand ||
-      isConnectGitHub ||
-      isBoot ||
       isLogCommand ||
       isStatusCommand ||
       isCommitCommand ||
@@ -563,15 +538,6 @@ function resolveTargetRef(parsed, cwd) {
   return null;
 }
 
-export function buildBootSessionArgs(connection, userInfo, parsed) {
-  return {
-    token: connection.token,
-    providerOverride: parsed.provider,
-    modelOverride: parsed.model,
-    username: userInfo.name || connection.user?.login || null
-  };
-}
-
 function renderFinalOutput({ runtimeOptions, mode, commitData, explanation, responseMeta, promptMeta }) {
   if (runtimeOptions.format === "json") {
     return formatJsonOutput({ mode, commitData, explanation, responseMeta, promptMeta });
@@ -625,56 +591,6 @@ export async function main(argv = process.argv) {
   if (parsed.installHook) {
     const hookPath = installHook({ cwd, hookName: parsed.hookName });
     console.log(`Installed ${parsed.hookName} hook at ${hookPath}`);
-    return 0;
-  }
-
-  if (parsed.connectGitHub) {
-    let token = parsed.connectToken;
-    if (!token) {
-      if (process.env.GITHUB_TOKEN) {
-        token = process.env.GITHUB_TOKEN;
-      } else {
-        console.error("Please provide your GitHub Personal Access Token.\nRun: gitxplain --connect-github <YOUR_TOKEN>\nOr set it in your .env as GITHUB_TOKEN=...");
-        return 1;
-      }
-    }
-    try {
-      console.log("Verifying token with GitHub API...");
-      const userInfo = await verifyGitToken(token);
-      await saveGitConnection(token, "github", userInfo);
-      console.log(`\nSuccessfully connected to GitHub as: \x1b[36m${userInfo.login}\x1b[0m`);
-      console.log(`Token saved securely to your local configuration.\n`);
-    } catch (e) {
-      console.error(`Token verification failed: ${e.message}`);
-      return 1;
-    }
-    return 0;
-  }
-
-  if (parsed.boot) {
-    if (!isGitConnected()) {
-      console.error("You must connect a GitHub account first to use the interactive agent.\nCommand: gitxplain --connect-github <YOUR_TOKEN>");
-      return 1;
-    }
-    const connection = loadGitConnection();
-    const userInfo = getGitUserInfo();
-    try {
-      const { getProviderConfig, validateProviderConfig } = await import(
-        "./services/aiService.js"
-      );
-      const config = getProviderConfig(parsed.provider, parsed.model);
-      validateProviderConfig(config);
-      const sessionArgs = buildBootSessionArgs(connection, userInfo, parsed);
-      await startChatSession(
-        sessionArgs.token,
-        sessionArgs.providerOverride,
-        sessionArgs.modelOverride,
-        sessionArgs.username
-      );
-    } catch (configError) {
-      console.error(`Missing LLM Key. Please check your .env variables or --provider flags.\n${configError.message}`);
-      return 1;
-    }
     return 0;
   }
 

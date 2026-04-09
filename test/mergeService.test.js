@@ -15,6 +15,7 @@ import {
   formatReleaseMergePlan,
   formatReleaseTagPlan,
   selectReleaseTags,
+  selectReleaseTagsFromReleaseCommits,
   selectReleaseWindows
 } from "../cli/services/mergeService.js";
 
@@ -289,6 +290,37 @@ test("selectReleaseTags maps each unreleased version to the release window end c
   assert.equal(selection.tags[0].tagName, "0.1.2");
   assert.equal(selection.tags[0].targetSha, "4444444444444444444444444444444444444444");
   assert.equal(selection.tags[0].targetShortSha, "4444444");
+});
+
+test("selectReleaseTagsFromReleaseCommits maps each untagged release commit to a tag", () => {
+  const releaseCommits = [
+    {
+      sha: "1111111111111111111111111111111111111111",
+      shortSha: "1111111",
+      subject: "release 0.1.2",
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      sha: "2222222222222222222222222222222222222222",
+      shortSha: "2222222",
+      subject: "release 0.1.1",
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    },
+    {
+      sha: "3333333333333333333333333333333333333333",
+      shortSha: "3333333",
+      subject: "release 0.1.0",
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    }
+  ];
+
+  const selection = selectReleaseTagsFromReleaseCommits(releaseCommits, ["0.1.1"]);
+
+  assert.deepEqual(selection.taggedVersions, ["0.1.1"]);
+  assert.equal(selection.latestDetectedVersion, "0.1.0");
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.2", "0.1.0"]);
+  assert.equal(selection.tags[0].targetSha, "1111111111111111111111111111111111111111");
+  assert.equal(selection.tags[1].targetSha, "3333333333333333333333333333333333333333");
 });
 
 test("formatReleaseMergePlan renders release commit plan", () => {
@@ -574,6 +606,48 @@ test("buildReleaseTagPlan works when release is disconnected from main", () => {
     assert.equal(tagPlan.mergeBase, null);
     assert.deepEqual(tagPlan.taggedVersions, ["0.1.0"]);
     assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("buildReleaseTagPlan tags every untagged release commit on the release branch", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-tag-release-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.0" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: scaffold app");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.1" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.1");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.2" }, null, 2)}\n`);
+    runGit("commit", "-am", "chore: bump version to 0.1.2");
+
+    const mergePlan = finalizeReleaseMergePlan(buildReleaseMergePlan(repoDir));
+    executeReleaseMerge(mergePlan, repoDir);
+    runGit("tag", "-a", "0.1.1", "release~1", "-m", "release 0.1.1");
+    runGit("checkout", "main");
+
+    const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlan(repoDir));
+
+    assert.equal(tagPlan.releaseExists, true);
+    assert.equal(tagPlan.mergeBase, null);
+    assert.deepEqual(tagPlan.taggedVersions, ["0.1.1"]);
+    assert.equal(tagPlan.latestDetectedVersion, "0.1.2");
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.0", "0.1.2"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.targetSubject), ["release 0.1.0", "release 0.1.2"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }

@@ -49,7 +49,7 @@ test("formatOutput normalizes headings and keeps readable spacing", { concurrenc
   assert.match(formatted, /\nSummary:\n- Fixed login crash\n\nSecurity Review:\n- No significant findings/);
 });
 
-test("formatOutput colors positive and negative bullet lines", { concurrency: false }, () => {
+test("formatOutput keeps bullet markers styled without tone colors", { concurrency: false }, () => {
   const originalIsTTY = process.stdout.isTTY;
   const originalForceColor = process.env.FORCE_COLOR;
   Object.defineProperty(process.stdout, "isTTY", {
@@ -77,8 +77,10 @@ test("formatOutput colors positive and negative bullet lines", { concurrency: fa
     process.env.FORCE_COLOR = originalForceColor;
   }
 
-  assert.match(formatted, /\u001b\[31m-\u001b\[0m/);
-  assert.match(formatted, /\u001b\[32m-\u001b\[0m/);
+  assert.match(formatted, /\u001b\[36m-\u001b\[0m/);
+  assert.doesNotMatch(formatted, /\u001b\[31m-\u001b\[0m/);
+  assert.doesNotMatch(formatted, /\u001b\[32m-\u001b\[0m/);
+  assert.doesNotMatch(formatted, /\u001b\[33m-\u001b\[0m/);
 });
 
 test("formatOutput converts markdown headings and inline formatting into terminal text", { concurrency: false }, () => {
@@ -115,7 +117,7 @@ test("formatOutput converts markdown numbered headings like ### 1. Summary", { c
   assert.equal(formatted, "Summary:\nRefactor release planning.\n\nIssue:\nDuplicated logic.");
 });
 
-test("formatOutput treats low risk explanation text as positive", { concurrency: false }, () => {
+test("formatOutput leaves risk level text uncolored", { concurrency: false }, () => {
   const originalIsTTY = process.stdout.isTTY;
   const originalForceColor = process.env.FORCE_COLOR;
   Object.defineProperty(process.stdout, "isTTY", {
@@ -143,7 +145,8 @@ test("formatOutput treats low risk explanation text as positive", { concurrency:
     process.env.FORCE_COLOR = originalForceColor;
   }
 
-  assert.match(formatted, /\u001b\[32mLow\. The change is a simple refactoring with minimal risk\.\u001b\[0m/);
+  assert.match(formatted, /Low\. The change is a simple refactoring with minimal risk\./);
+  assert.doesNotMatch(formatted, /\u001b\[[0-9;]*mLow\. The change is a simple refactoring with minimal risk\.\u001b\[[0-9;]*m/);
 });
 
 test("formatMarkdownOutput includes metadata and explanation", { concurrency: false }, () => {

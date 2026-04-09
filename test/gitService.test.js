@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchCommitData,
+  gitPull,
   gitPush,
+  gitResetHard,
   getRepositoryLog,
   getRepositoryStatus,
   resolveStashRef,
@@ -130,6 +132,30 @@ test("gitPush runs plain git push with optional remote and branch", () => {
   assert.equal(gitPush("/tmp", "origin", "main", runner), "");
 
   assert.deepEqual(calls, ["push", "push origin main"]);
+});
+
+test("gitPull runs plain git pull with optional remote and branch", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "";
+  };
+
+  assert.equal(gitPull("/tmp", null, null, runner), "");
+  assert.equal(gitPull("/tmp", "origin", "main", runner), "");
+
+  assert.deepEqual(calls, ["pull", "pull origin main"]);
+});
+
+test("gitResetHard targets HEAD by default", () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args.join(" "));
+    return "";
+  };
+
+  assert.equal(gitResetHard("HEAD", "/tmp", runner), "");
+  assert.deepEqual(calls, ["reset --hard HEAD"]);
 });
 
 test("resolveStashRef converts plain indexes into stash refs", () => {

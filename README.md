@@ -80,6 +80,7 @@ gitxplain log --log
 gitxplain status
 gitxplain --status
 gitxplain pipeline
+gitxplain --pipeline
 gitxplain add README.md
 gitxplain remove README.md
 gitxplain remove hard
@@ -204,7 +205,7 @@ node /home/guru/Dev/gitxplain/cli/index.js HEAD~1 --full
 - `--commit`: propose commits for current uncommitted changes
 - `--log`: print Git log entries for the current repository
 - `--status`: print Git working tree status for the current repository
-- `pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
+- `pipeline` or `--pipeline`: inspect the current repository and generate GitHub Actions CI/CD workflows
 - `--execute`: apply a proposed split by rewriting history
 - `--dry-run`: preview the split or commit plan without applying it
 - `--json`: return structured JSON instead of formatted text

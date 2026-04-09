@@ -338,7 +338,7 @@ gitxplain --tag --execute
 gitxplore --tag --execute
 ```
 
-This command uses the same release-window detection as `merge`. It scans commits on your current branch after the branch split point, detects version bumps from version-file diffs, and maps each unreleased version to the last commit in that release window. By default it creates annotated tags named exactly after the detected version, such as `1.2.3`.
+This command scans the full history of your current branch, detects version bumps from version-file diffs, and maps each untagged detected version to the last commit in that version window. It works independently from the `merge` workflow and does not require a `release` branch. By default it creates annotated tags named exactly after the detected version, such as `1.2.3`.
 
 ## Commit Working Tree
 

@@ -39,12 +39,14 @@ import {
 import { installHook } from "./services/hookService.js";
 import {
   buildReleaseMergePlan,
+  buildReleaseStatus,
   buildReleaseTagPlan,
   executeReleaseMerge,
   executeReleaseTagPlan,
   finalizeReleaseMergePlan,
   finalizeReleaseTagPlan,
   formatReleaseMergePlan,
+  formatReleaseStatus,
   formatReleaseTagPlan
 } from "./services/mergeService.js";
 import {
@@ -109,6 +111,7 @@ const RESERVED_SUBCOMMANDS = new Set([
   "commit",
   "merge",
   "tag",
+  "release",
   "log",
   "status",
   "pipeline"
@@ -131,6 +134,8 @@ Git:
   gitxplain --merge
   gitxplain tag
   gitxplain --tag
+  gitxplain release
+  gitxplain release status
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -162,6 +167,7 @@ What It Does:
   Plan commits for uncommitted work and split oversized commits into atomic steps
   Merge release-version branch changes into a dedicated release branch
   Tag release-version commit windows on the current branch
+  Inspect release branch health, missing tags, and drift from the source branch
   Inspect repository history and working tree status without calling the LLM
   Inspect the current repository and scaffold GitHub Actions CI/CD workflows
   Run quick local actions to stage, unstage, delete files, pop stashes, or push
@@ -180,6 +186,7 @@ Modes:
   --split      Propose splitting a commit into smaller atomic commits
   --merge      Preview or apply a merge into the release branch based on version bumps
   --tag        Preview or create release tags based on version bumps
+  release      Show release branch health, missing tags, and next recommended action
   --commit     Propose commits for current uncommitted changes
   --log        Print Git log entries for the current repository
   --status     Print Git working tree status for the current repository
@@ -279,6 +286,8 @@ Examples:
   gitxplain --merge --execute
   gitxplain tag
   gitxplain --tag --execute
+  gitxplain release
+  gitxplain release status
   gitxplain log
   gitxplain --log
   gitxplain status
@@ -382,6 +391,7 @@ export function parseArgs(argv, options = {}) {
   const isCommitCommand = subcommand === "commit";
   const isMergeCommand = subcommand === "merge";
   const isTagCommand = subcommand === "tag";
+  const isReleaseCommand = subcommand === "release";
   const isAddCommand = subcommand === "add";
   const isRemoveCommand = subcommand === "remove";
   const isDeleteCommand = subcommand === "del";
@@ -406,6 +416,8 @@ export function parseArgs(argv, options = {}) {
     commitCommand: isCommitCommand,
     mergeCommand: isMergeCommand,
     tagCommand: isTagCommand,
+    releaseCommand: isReleaseCommand,
+    releaseAction: isReleaseCommand ? positional[1] ?? "status" : null,
     addCommand: isAddCommand,
     removeCommand: isRemoveCommand,
     deleteCommand: isDeleteCommand,
@@ -436,6 +448,7 @@ export function parseArgs(argv, options = {}) {
       isCommitCommand ||
       isMergeCommand ||
       isTagCommand ||
+      isReleaseCommand ||
       isAddCommand ||
       isRemoveCommand ||
       isDeleteCommand ||
@@ -672,6 +685,15 @@ export async function main(argv = process.argv) {
 
   if (parsed.statusCommand || parsed.status) {
     console.log(getRepositoryStatus(cwd));
+    return 0;
+  }
+
+  if (parsed.releaseCommand) {
+    if (parsed.releaseAction !== "status") {
+      throw new Error(`Unknown release subcommand: ${parsed.releaseAction}`);
+    }
+
+    console.log(formatReleaseStatus(buildReleaseStatus(cwd)));
     return 0;
   }
 

@@ -130,6 +130,14 @@ test("parseArgs handles tag subcommand", () => {
   assert.equal(parsed.mode, null);
 });
 
+test("parseArgs handles release status subcommand", () => {
+  const parsed = parseArgs(["node", "gitxplain", "release", "status"]);
+
+  assert.equal(parsed.releaseCommand, true);
+  assert.equal(parsed.releaseAction, "status");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles repository log subcommand", () => {
   const parsed = parseArgs(["node", "gitxplain", "log"]);
 

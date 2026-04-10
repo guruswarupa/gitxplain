@@ -96,6 +96,18 @@ const FORMAT_FLAGS = new Map([
   ["--html", "html"]
 ]);
 
+const ANALYSIS_MODES = new Set([
+  "summary",
+  "issues",
+  "fix",
+  "impact",
+  "full",
+  "lines",
+  "review",
+  "security",
+  "split"
+]);
+
 const RESERVED_SUBCOMMANDS = new Set([
   "help",
   "config",
@@ -464,51 +476,13 @@ function askQuestion(prompt) {
   });
 }
 
-async function chooseModeInteractively() {
-  const answer = await askQuestion(
-    [
-      "What do you want to know?",
-      "1. Summary",
-      "2. Issues Fixed",
-      "3. Fix Explanation",
-      "4. Impact",
-      "5. Full Analysis",
-      "6. Line-by-Line Code Walkthrough",
-      "7. Code Review",
-      "8. Security Review",
-      "9. Split Commit",
-      "10. Merge To Release Branch",
-      "11. Tag Release Commits",
-      "12. Repository Log",
-      "13. Commit Working Tree",
-      "14. Create CI/CD Pipelines",
-      "> "
-    ].join("\n")
-  );
-
-  const selections = {
-    "1": "summary",
-    "2": "issues",
-    "3": "fix",
-    "4": "impact",
-    "5": "full",
-    "6": "lines",
-    "7": "review",
-    "8": "security",
-    "9": "split",
-    "10": "merge",
-    "11": "tag",
-    "12": "log",
-    "13": "commit",
-    "14": "pipeline"
-  };
-
-  return selections[answer] ?? "full";
+function resolveConfiguredAnalysisMode(config) {
+  return ANALYSIS_MODES.has(config.mode) ? config.mode : "full";
 }
 
 function resolveRuntimeOptions(parsed, config) {
   return {
-    mode: parsed.mode ?? config.mode ?? "full",
+    mode: parsed.mode ?? resolveConfiguredAnalysisMode(config),
     format: parsed.format ?? config.format ?? "plain",
     provider: parsed.provider ?? config.provider ?? null,
     model: parsed.model ?? config.model ?? null,
@@ -554,6 +528,36 @@ function renderFinalOutput({ runtimeOptions, mode, commitData, explanation, resp
     promptMeta,
     options: runtimeOptions
   });
+}
+
+async function runPipelineCommand(cwd) {
+  const analysis = inspectRepositoryForPipeline(cwd);
+
+  if (!analysis.supported) {
+    console.log(analysis.reason);
+    return 1;
+  }
+
+  console.log(formatPipelineRecommendations(analysis));
+
+  const answer = await askQuestion(
+    `\nChoose a pipeline option (1-${analysis.options.length}) or type "cancel" > `
+  );
+  const selection = resolvePipelineSelection(analysis, answer);
+
+  if (!selection) {
+    console.log("Aborted.");
+    return 0;
+  }
+
+  const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
+  console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
+
+  if (notes.length > 0) {
+    console.log(`\n${notes.join("\n")}`);
+  }
+
+  return 0;
 }
 
 export async function main(argv = process.argv) {
@@ -605,36 +609,6 @@ export async function main(argv = process.argv) {
     }
 
     console.log(formatReleaseStatus(buildReleaseStatus(cwd)));
-    return 0;
-  }
-
-  if (parsed.pipelineCommand) {
-    const analysis = inspectRepositoryForPipeline(cwd);
-
-    if (!analysis.supported) {
-      console.log(analysis.reason);
-      return 1;
-    }
-
-    console.log(formatPipelineRecommendations(analysis));
-
-    const answer = await askQuestion(
-      `\nChoose a pipeline option (1-${analysis.options.length}) or type "cancel" > `
-    );
-    const selection = resolvePipelineSelection(analysis, answer);
-
-    if (!selection) {
-      console.log("Aborted.");
-      return 0;
-    }
-
-    const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
-    console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
-
-    if (notes.length > 0) {
-      console.log(`\n${notes.join("\n")}`);
-    }
-
     return 0;
   }
 
@@ -706,39 +680,9 @@ export async function main(argv = process.argv) {
   }
 
   const runtimeOptions = resolveRuntimeOptions(parsed, config);
-  const mode = parsed.mode ?? config.mode ?? (await chooseModeInteractively());
+  const mode = ANALYSIS_MODES.has(parsed.mode) ? parsed.mode : resolveConfiguredAnalysisMode(config);
 
-  if (mode === "pipeline") {
-    const analysis = inspectRepositoryForPipeline(cwd);
-
-    if (!analysis.supported) {
-      console.log(analysis.reason);
-      return 1;
-    }
-
-    console.log(formatPipelineRecommendations(analysis));
-
-    const answer = await askQuestion(
-      `\nChoose a pipeline option (1-${analysis.options.length}) or type "cancel" > `
-    );
-    const selection = resolvePipelineSelection(analysis, answer);
-
-    if (!selection) {
-      console.log("Aborted.");
-      return 0;
-    }
-
-    const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
-    console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
-
-    if (notes.length > 0) {
-      console.log(`\n${notes.join("\n")}`);
-    }
-
-    return 0;
-  }
-
-  if (mode === "commit") {
+  if (parsed.mode === "commit") {
     const commitData = fetchWorkingTreeData(cwd);
 
     if (commitData.filesChanged.length === 0 || commitData.diff === "") {
@@ -788,7 +732,7 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (mode === "merge" || parsed.merge) {
+  if (parsed.mode === "merge" || parsed.merge) {
     if (parsed.commitRef) {
       throw new Error("--merge works from the current branch and does not accept a commit ref.");
     }
@@ -820,7 +764,7 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
-  if (mode === "tag" || parsed.tag) {
+  if (parsed.mode === "tag" || parsed.tag) {
     if (parsed.commitRef) {
       throw new Error("--tag works from the current branch and does not accept a commit ref.");
     }

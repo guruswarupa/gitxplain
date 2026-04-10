@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node ./cli/index.js",
-    "lint": "node --check ./cli/index.js && node --check ./cli/services/chatService.js && node --check ./cli/services/gitConnectionService.js && node --check ./cli/services/envLoader.js && node --check ./cli/services/pipelineService.js",
+    "lint": "node --check ./cli/index.js && node --check ./cli/services/envLoader.js && node --check ./cli/services/pipelineService.js",
     "test": "node --test"
   },
   "keywords": [

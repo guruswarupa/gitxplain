@@ -3,7 +3,7 @@
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
 import { loadEnvFile } from "./services/envLoader.js";
 import { copyToClipboard } from "./services/clipboardService.js";
@@ -122,11 +122,14 @@ const RESERVED_SUBCOMMANDS = new Set([
   "push"
 ]);
 
+const CLI_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 function printHelp() {
   console.log(`gitxplain - AI-powered Git change analysis, review, and commit workflow CLI
 
 Usage:
   gitxplain --help
+  gitxplain --version
   gitxplain config set provider <name>
   gitxplain config set api-key <value> [--provider <name>]
   gitxplain config get [key]
@@ -394,6 +397,7 @@ export function parseArgs(argv, options = {}) {
   return {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
+    version: flags.has("--version"),
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
     configCommand: isConfigCommand,
@@ -563,6 +567,11 @@ export async function main(argv = process.argv) {
   loadEnvFile(cwd); // Ensure environment is loaded first
   const config = loadConfig(cwd);
   applyConfigEnvironment(config);
+
+  if (parsed.version) {
+    console.log(CLI_VERSION);
+    return 0;
+  }
 
   if (parsed.help || hasNoCommandOrFlags) {
     printHelp();

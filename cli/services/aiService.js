@@ -365,6 +365,7 @@ export async function generateExplanation({
   providerOverride,
   modelOverride,
   maxDiffLines,
+  noCache = false,
   stream = false,
   onChunk = null,
   onStart = null
@@ -386,7 +387,7 @@ export async function generateExplanation({
     model: config.model,
     prompt
   });
-  const cached = readCache(cacheKey);
+  const cached = noCache ? null : readCache(cacheKey);
 
   if (cached) {
     return {
@@ -405,10 +406,12 @@ export async function generateExplanation({
       ? await requestGemini(config, prompt, requestOptions)
       : await requestOpenAICompatible(config, prompt, requestOptions);
 
-  writeCache(cacheKey, {
-    explanation: result.explanation,
-    responseMeta: result.responseMeta
-  });
+  if (!noCache) {
+    writeCache(cacheKey, {
+      explanation: result.explanation,
+      responseMeta: result.responseMeta
+    });
+  }
 
   return {
     explanation: result.explanation,

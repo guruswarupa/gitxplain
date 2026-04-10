@@ -37,7 +37,8 @@ function listCacheEntries() {
       const stats = statSync(filePath);
       return {
         filePath,
-        mtimeMs: stats.mtimeMs
+        mtimeMs: stats.mtimeMs,
+        sizeBytes: stats.size
       };
     })
     .sort((left, right) => left.mtimeMs - right.mtimeMs);
@@ -104,4 +105,24 @@ export function clearCache() {
   }
 
   return entries.length;
+}
+
+export function getCacheStats() {
+  const entries = listCacheEntries();
+
+  if (entries.length === 0) {
+    return {
+      entryCount: 0,
+      totalSizeBytes: 0,
+      oldestEntryIso: null,
+      newestEntryIso: null
+    };
+  }
+
+  return {
+    entryCount: entries.length,
+    totalSizeBytes: entries.reduce((sum, entry) => sum + entry.sizeBytes, 0),
+    oldestEntryIso: new Date(entries[0].mtimeMs).toISOString(),
+    newestEntryIso: new Date(entries[entries.length - 1].mtimeMs).toISOString()
+  };
 }

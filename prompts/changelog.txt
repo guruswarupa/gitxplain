@@ -1,0 +1,36 @@
+Generate release notes in a conventional-changelog style.
+
+Context:
+- This may represent a single commit or a range of commits.
+- Prefer grouping entries under headings like Features, Fixes, Refactors, Docs, Tests, Chores, and Breaking Changes when supported by the evidence.
+- Use commit messages first, then use the diff to sharpen unclear items.
+- Be conservative and do not invent user-facing changes that are not visible in the Git data.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Change Hints:
+{{change_hints}}
+
+Diff:
+{{diff}}
+
+Return:
+
+1. Release Summary:
+- One short paragraph describing the overall release/change set
+
+2. Changelog:
+- Group entries under relevant categories
+- Keep bullets concise and user-facing
+- If there are no clear entries for a category, omit it
+
+3. Upgrade Notes:
+- Mention any migration steps, rollout cautions, or compatibility risks
+- If none are apparent, say so clearly

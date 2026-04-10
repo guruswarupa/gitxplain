@@ -29,7 +29,6 @@ Supported providers:
 - Supports plain, JSON, Markdown, and HTML output
 - Supports clipboard copy, verbosity controls, and hook installation
 - Supports project-level and user-level config files
-- Falls back to an interactive prompt when no analysis flag is supplied
 - Returns plain text or JSON output
 - Uses native Node APIs only, so the MVP has no runtime dependencies
 
@@ -39,7 +38,7 @@ Supported providers:
 - A Git repository in your current working directory
 - An API key for your chosen provider, or a local Ollama instance
 
-Optional environment variables:
+Optional advanced environment variables:
 
 - `LLM_PROVIDER` default: `openai`
 - `LLM_MODEL` optional shared model override
@@ -67,73 +66,106 @@ cp .env.example .env
 
 ```bash
 gitxplain --help
-gitxplain config set provider openai
-gitxplain config set api-key your_key
+gitxplain config set provider <name>
+gitxplain config set api-key <value> [--provider <name>]
+gitxplain config get [key]
 gitxplain config list
-gitxplain branch -a
-gitxplain checkout -b feature/demo
+gitxplain <commit-id> [options]
+gitxplain <start>..<end> [options]
+gitxplain --branch [base-ref] [options]
+gitxplain --pr [base-ref] [options]
 gitxplain --commit
-gitxplain --release
-gitxplain --release status
+gitxplain --release [status]
 gitxplain --merge
 gitxplain --tag
-gitxplore --tag
 gitxplain --log
 gitxplain --status
 gitxplain --pipeline
-gitxplain add README.md
-gitxplain remove README.md
-gitxplain remove hard
-gitxplain del scratch.txt
-gitxplain bin
-gitxplain pop
-gitxplain pop 2
-gitxplain pull
-gitxplain pull origin main
-gitxplain push
-gitxplain push origin main
-gitxplain <commit-id>
-gitxplain <commit-id> --summary
-gitxplain <commit-id> --issues
-gitxplain <commit-id> --fix
-gitxplain <commit-id> --impact
-gitxplain <commit-id> --full
-gitxplain <commit-id> --lines
-gitxplain <commit-id> --review
-gitxplain <commit-id> --security
-gitxplain <commit-id> --split
-gitxplain --commit --execute
-gitxplain --merge --execute
-gitxplain --tag --execute
-gitxplain <commit-id> --json
-gitxplain <commit-id> --markdown
-gitxplain <commit-id> --html
-gitxplain <commit-id> --stream
-gitxplain <commit-id> --clipboard
-gitxplain <commit-id> --verbose
-gitxplain <commit-id> --quiet
-gitxplain --log
-gitxplain <start>..<end> --markdown
-gitxplain --branch main --review
-gitxplain --pr origin/main --security
-gitxplain install-hook
-gitxplain <commit-id> --provider openrouter --model anthropic/claude-3.7-sonnet
-gitxplain <commit-id> --provider chutes --model deepseek-ai/DeepSeek-V3-0324
-gitxplain <commit-id> --split --execute
+```
+
+Analysis:
+
+```bash
+--summary
+--issues
+--fix
+--impact
+--full
+--lines
+--review
+--security
+--split
+--commit
+--execute
+--dry-run
+```
+
+Release:
+
+```bash
+--release [status]
+--merge
+--tag
+```
+
+Repo:
+
+```bash
+--log
+--status
+--pipeline
+```
+
+Quick Actions:
+
+```bash
+config
+add
+remove
+remove hard
+del
+bin
+pop
+pull
+push
+install-hook
+git
+```
+
+Output:
+
+```bash
+--provider <name>
+--model <name>
+--json
+--markdown
+--html
+--quiet
+--verbose
+--clipboard
+--stream
+--max-diff-lines <n>
 ```
 
 Examples:
 
 ```bash
+npm start -- --help
+npm start -- config set provider openai
+npm start -- config set api-key your_key
 npm start -- HEAD~1 --summary
 npm start -- --commit
+npm start -- --release status
 npm start -- --merge
 npm start -- --tag
 npm start -- --log
+npm start -- --status
+npm start -- --pipeline
 npm start -- a1b2c3d --full
 npm start -- HEAD~1 --lines
 npm start -- HEAD~5..HEAD --markdown
 npm start -- --branch main --review
+npm start -- install-hook
 npm start -- HEAD~1 --provider groq --model llama-3.3-70b-versatile
 npm start -- HEAD~1 --provider gemini --model gemini-2.5-flash
 npm start -- HEAD~1 --provider chutes --model deepseek-ai/DeepSeek-V3-0324
@@ -204,7 +236,7 @@ ghxplain help
 
 Run that from the `ghxplain` repository root.
 
-If no analysis flag is supplied, the CLI asks what kind of explanation you want.
+If no command or mode is supplied, the CLI prints help.
 
 ## Repository Log
 
@@ -411,6 +443,12 @@ gitxplain config set provider openai
 gitxplain config set api-key your_key
 ```
 
+You can also save a default model:
+
+```bash
+gitxplain config set model gpt-4.1-mini
+```
+
 You can switch providers later:
 
 ```bash
@@ -425,50 +463,7 @@ gitxplain config list
 gitxplain config get provider
 ```
 
-Environment variables still work if you prefer them.
-
-OpenAI:
-
-```bash
-export LLM_PROVIDER=openai
-export OPENAI_API_KEY=your_key
-```
-
-Groq:
-
-```bash
-export LLM_PROVIDER=groq
-export GROQ_API_KEY=your_key
-```
-
-OpenRouter:
-
-```bash
-export LLM_PROVIDER=openrouter
-export OPENROUTER_API_KEY=your_key
-```
-
-Gemini:
-
-```bash
-export LLM_PROVIDER=gemini
-export GEMINI_API_KEY=your_key
-```
-
-Ollama:
-
-```bash
-export LLM_PROVIDER=ollama
-export OLLAMA_MODEL=llama3.2
-```
-
-Chutes AI:
-
-```bash
-export LLM_PROVIDER=chutes
-export CHUTES_API_KEY=your_key
-export CHUTES_MODEL=deepseek-ai/DeepSeek-V3-0324
-```
+Saved user settings live in `~/.gitxplain/config.json` on macOS/Linux, or `%USERPROFILE%\.gitxplain\config.json` on Windows.
 
 ## Development
 

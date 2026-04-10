@@ -7,6 +7,7 @@ import {
   clearCache,
   createCacheKey,
   getCacheDirectory,
+  getCacheStats,
   readCache,
   writeCache
 } from "../cli/services/cacheService.js";
@@ -62,6 +63,41 @@ test("clearCache removes cached files and returns deleted entry count", () => {
 
     assert.equal(deletedCount, 2);
     assert.equal(fs.existsSync(getCacheDirectory()), false);
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("getCacheStats reports size and oldest/newest timestamps", () => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "gitxplain-cache-stats-"));
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+
+  try {
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+
+    writeCache(createCacheKey({ prompt: "stats-one" }), { explanation: "1", responseMeta: { provider: "openai", model: "m", cacheHit: false, latencyMs: 1 } });
+    writeCache(createCacheKey({ prompt: "stats-two" }), { explanation: "2", responseMeta: { provider: "openai", model: "m", cacheHit: false, latencyMs: 1 } });
+
+    const stats = getCacheStats();
+
+    assert.equal(stats.entryCount, 2);
+    assert.match(String(stats.totalSizeBytes), /^[1-9]\d*$/);
+    assert.match(stats.oldestEntryIso ?? "", /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(stats.newestEntryIso ?? "", /^\d{4}-\d{2}-\d{2}T/);
   } finally {
     if (originalHome === undefined) {
       delete process.env.HOME;

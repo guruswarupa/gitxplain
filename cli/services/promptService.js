@@ -16,7 +16,13 @@ const PROMPT_FILES = {
   review: "review.txt",
   security: "security.txt",
   split: "split.txt",
-  commit: "commit.txt"
+  commit: "commit.txt",
+  changelog: "changelog.txt",
+  refactor: "refactor.txt",
+  "test-suggest": "test-suggest.txt",
+  "pr-description": "pr-description.txt",
+  blame: "blame.txt",
+  stash: "stash.txt"
 };
 
 function fillTemplate(template, values) {

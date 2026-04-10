@@ -4,7 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import {
+  buildBitbucketPipelinesWorkflow,
   buildCiWorkflow,
+  buildCircleCiWorkflow,
+  buildGitLabCiWorkflow,
   formatPipelineRecommendations,
   inspectRepositoryForPipeline,
   resolvePipelineSelection,
@@ -47,6 +50,9 @@ test("inspectRepositoryForPipeline detects a node repository and release support
     assert.equal(analysis.primary.commands.build, "npm run build");
     assert.equal(analysis.primary.commands.pack, "npm pack --dry-run");
     assert.equal(analysis.options.some((option) => option.id === "ci-release"), true);
+    assert.equal(analysis.options.some((option) => option.id === "gitlab-ci"), true);
+    assert.equal(analysis.options.some((option) => option.id === "circleci"), true);
+    assert.equal(analysis.options.some((option) => option.id === "bitbucket-pipelines"), true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -113,6 +119,25 @@ test("buildCiWorkflow includes detected node verification commands", () => {
   assert.match(workflow, /run: npm run build/);
   assert.match(workflow, /run: npm pack --dry-run/);
   assert.match(workflow, /npm_config_cache/);
+});
+
+test("alternative CI builders generate expected config files", () => {
+  const context = {
+    type: "node",
+    packageManager: "npm",
+    nodeVersion: { source: "value", value: "20" },
+    commands: {
+      install: "npm ci",
+      lint: "npm run lint",
+      test: "npm test",
+      build: "npm run build",
+      pack: null
+    }
+  };
+
+  assert.match(buildGitLabCiWorkflow(context), /image: node:20/);
+  assert.match(buildCircleCiWorkflow(context), /version: 2\.1/);
+  assert.match(buildBitbucketPipelinesWorkflow(context), /pipelines:/);
 });
 
 test("resolvePipelineSelection accepts numeric answers", () => {
@@ -199,4 +224,25 @@ test("formatPipelineRecommendations shows available options clearly", () => {
   assert.match(output, /Detected project type: node/);
   assert.match(output, /Available pipeline options:/);
   assert.match(output, /1\. GitHub Actions CI verification/);
+});
+
+test("writePipelineFiles creates GitLab CI and CircleCI files", () => {
+  const cwd = createTempRepo();
+
+  try {
+    writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "demo-cli", scripts: { test: "node --test" } }, null, 2)
+    );
+    writeFileSync(path.join(cwd, "package-lock.json"), "{}");
+
+    const analysis = inspectRepositoryForPipeline(cwd);
+    writePipelineFiles(cwd, analysis, analysis.options.find((option) => option.id === "gitlab-ci"));
+    writePipelineFiles(cwd, analysis, analysis.options.find((option) => option.id === "circleci"));
+
+    assert.match(readFileSync(path.join(cwd, ".gitlab-ci.yml"), "utf8"), /stages:/);
+    assert.match(readFileSync(path.join(cwd, ".circleci", "config.yml"), "utf8"), /workflows:/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

@@ -414,6 +414,24 @@ export function inspectRepositoryForPipeline(cwd) {
       label: "GitHub Actions CI verification",
       description: "Runs install, lint, test, build, and package checks when supported.",
       files: [".github/workflows/ci.yml"]
+    },
+    {
+      id: "gitlab-ci",
+      label: "GitLab CI verification",
+      description: "Creates a .gitlab-ci.yml pipeline with install, lint, test, and build stages.",
+      files: [".gitlab-ci.yml"]
+    },
+    {
+      id: "circleci",
+      label: "CircleCI verification",
+      description: "Creates a .circleci/config.yml pipeline for verification jobs.",
+      files: [".circleci/config.yml"]
+    },
+    {
+      id: "bitbucket-pipelines",
+      label: "Bitbucket Pipelines verification",
+      description: "Creates bitbucket-pipelines.yml with install, test, and build steps.",
+      files: ["bitbucket-pipelines.yml"]
     }
   ];
 
@@ -676,6 +694,87 @@ export function buildContainerWorkflow() {
   ].join("\n").concat("\n");
 }
 
+function buildPipelineCommands(context) {
+  return [context.commands.install, context.commands.lint, context.commands.test, context.commands.build, context.commands.pack]
+    .filter(Boolean);
+}
+
+export function buildGitLabCiWorkflow(context) {
+  const commands = buildPipelineCommands(context);
+  const image =
+    context.type === "python"
+      ? "python:3.12"
+      : context.type === "go"
+        ? "golang:1.22"
+        : context.type === "rust"
+          ? "rust:latest"
+          : "node:20";
+
+  return [
+    `image: ${image}`,
+    "",
+    "stages:",
+    "  - verify",
+    "",
+    "verify:",
+    "  stage: verify",
+    "  script:",
+    ...commands.map((command) => `    - ${command}`)
+  ].join("\n").concat("\n");
+}
+
+export function buildCircleCiWorkflow(context) {
+  const image =
+    context.type === "python"
+      ? "cimg/python:3.12"
+      : context.type === "go"
+        ? "cimg/go:1.22"
+        : context.type === "rust"
+          ? "cimg/rust:1.83"
+          : "cimg/node:20.10";
+  const commands = buildPipelineCommands(context);
+
+  return [
+    "version: 2.1",
+    "",
+    "jobs:",
+    "  verify:",
+    "    docker:",
+    `      - image: ${image}`,
+    "    steps:",
+    "      - checkout",
+    ...commands.map((command) => `      - run: ${command}`),
+    "",
+    "workflows:",
+    "  verify:",
+    "    jobs:",
+    "      - verify"
+  ].join("\n").concat("\n");
+}
+
+export function buildBitbucketPipelinesWorkflow(context) {
+  const image =
+    context.type === "python"
+      ? "python:3.12"
+      : context.type === "go"
+        ? "golang:1.22"
+        : context.type === "rust"
+          ? "rust:latest"
+          : "node:20";
+  const commands = buildPipelineCommands(context);
+
+  return [
+    `image: ${image}`,
+    "",
+    "pipelines:",
+    "  default:",
+    "    - step:",
+    "        name: Verify",
+    "        script:",
+    ...commands.map((command) => `          - ${command}`)
+  ].join("\n").concat("\n");
+}
+
 export function writePipelineFiles(cwd, analysis, selection) {
   if (!analysis.supported) {
     throw new Error(analysis.reason);
@@ -689,6 +788,7 @@ export function writePipelineFiles(cwd, analysis, selection) {
 
   const writeWorkflow = (relativePath, contents) => {
     const absolutePath = path.join(cwd, relativePath);
+    mkdirSync(path.dirname(absolutePath), { recursive: true });
     writeFileSync(absolutePath, contents, "utf8");
     writtenFiles.push(relativePath);
   };
@@ -711,6 +811,18 @@ export function writePipelineFiles(cwd, analysis, selection) {
 
   if (selection.id === "container") {
     writeWorkflow(".github/workflows/container.yml", buildContainerWorkflow());
+  }
+
+  if (selection.id === "gitlab-ci") {
+    writeWorkflow(".gitlab-ci.yml", buildGitLabCiWorkflow(analysis.primary));
+  }
+
+  if (selection.id === "circleci") {
+    writeWorkflow(".circleci/config.yml", buildCircleCiWorkflow(analysis.primary));
+  }
+
+  if (selection.id === "bitbucket-pipelines") {
+    writeWorkflow("bitbucket-pipelines.yml", buildBitbucketPipelinesWorkflow(analysis.primary));
   }
 
   if (selection.id === "container" && !selection.files.includes(".github/workflows/ci.yml")) {

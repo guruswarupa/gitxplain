@@ -54,7 +54,19 @@ function normalizeMarkdownLine(line, state) {
 }
 
 function formatTargetLabel(commitData) {
-  return commitData.analysisType === "range" ? "Range" : "Commit";
+  if (commitData.analysisType === "range") {
+    return "Range";
+  }
+
+  if (commitData.analysisType === "blame") {
+    return "File";
+  }
+
+  if (commitData.analysisType === "stash") {
+    return "Stash";
+  }
+
+  return "Commit";
 }
 
 function normalizeHeading(line) {
@@ -194,6 +206,10 @@ export function formatFooter({ responseMeta, promptMeta, options }) {
 
   if (responseMeta.usage) {
     lines.push(`Usage: ${JSON.stringify(responseMeta.usage)}`);
+  }
+
+  if (responseMeta.estimatedCostUsd != null) {
+    lines.push(`Estimated Cost: $${responseMeta.estimatedCostUsd.toFixed(6)}`);
   }
 
   if (promptMeta?.warnings?.length) {

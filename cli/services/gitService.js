@@ -689,6 +689,119 @@ function parseUniqueFiles(...groups) {
   return [...new Set(groups.flatMap((group) => group.split("\n").map((line) => line.trim()).filter(Boolean)))];
 }
 
+function buildFileScopedDisplayRef(targetRef, filePath) {
+  return `${targetRef} :: ${filePath}`;
+}
+
+function formatIsoDateFromUnixTimestamp(value) {
+  const timestampMs = Number.parseInt(value, 10) * 1000;
+  if (Number.isNaN(timestampMs)) {
+    return "unknown-date";
+  }
+
+  return new Date(timestampMs).toISOString().slice(0, 10);
+}
+
+function parseBlamePorcelain(porcelain) {
+  const records = [];
+  const lines = porcelain.split("\n");
+  let index = 0;
+
+  while (index < lines.length) {
+    const header = lines[index]?.trim();
+    if (!header) {
+      index += 1;
+      continue;
+    }
+
+    const headerMatch = header.match(/^([0-9a-f]{7,40}|\^?[0-9a-f]{7,40})\s+\d+\s+(\d+)\s+(\d+)$/i);
+    if (!headerMatch) {
+      index += 1;
+      continue;
+    }
+
+    const [, commitSha, finalLineRaw, lineCountRaw] = headerMatch;
+    const record = {
+      commitSha,
+      finalLine: Number.parseInt(finalLineRaw, 10),
+      lineCount: Number.parseInt(lineCountRaw, 10),
+      author: "Unknown Author",
+      authorMail: "",
+      authorTime: "",
+      summary: "",
+      code: ""
+    };
+
+    index += 1;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.startsWith("\t")) {
+        record.code = line.slice(1);
+        index += 1;
+        break;
+      }
+
+      if (line.startsWith("author ")) {
+        record.author = line.slice("author ".length).trim();
+      } else if (line.startsWith("author-mail ")) {
+        record.authorMail = line.slice("author-mail ".length).trim();
+      } else if (line.startsWith("author-time ")) {
+        record.authorTime = line.slice("author-time ".length).trim();
+      } else if (line.startsWith("summary ")) {
+        record.summary = line.slice("summary ".length).trim();
+      }
+
+      index += 1;
+    }
+
+    records.push(record);
+  }
+
+  return records;
+}
+
+function buildBlameAnalysisDiff(filePath, records) {
+  const byAuthor = new Map();
+
+  for (const record of records) {
+    const key = `${record.author}|${record.authorMail}`;
+    const existing = byAuthor.get(key) ?? {
+      author: record.author,
+      authorMail: record.authorMail,
+      lineCount: 0,
+      commitShas: new Set(),
+      summaries: new Set()
+    };
+
+    existing.lineCount += 1;
+    existing.commitShas.add(record.commitSha);
+    if (record.summary) {
+      existing.summaries.add(record.summary);
+    }
+    byAuthor.set(key, existing);
+  }
+
+  const authorSection = [...byAuthor.values()]
+    .sort((left, right) => right.lineCount - left.lineCount)
+    .map(
+      (entry) =>
+        `- ${entry.author}${entry.authorMail ? ` ${entry.authorMail}` : ""}: ${entry.lineCount} line(s), ${entry.commitShas.size} commit(s), notable commits: ${[...entry.summaries].slice(0, 3).join("; ") || "n/a"}`
+    )
+    .join("\n");
+
+  const lineSection = records
+    .map((record) => {
+      const endLine = record.finalLine + record.lineCount - 1;
+      const lineLabel = record.lineCount > 1 ? `L${record.finalLine}-L${endLine}` : `L${record.finalLine}`;
+      const shortSha = record.commitSha.replace(/^\^/, "").slice(0, 8);
+      const authorDate = formatIsoDateFromUnixTimestamp(record.authorTime);
+      return `${lineLabel} | ${record.author} | ${authorDate} | ${shortSha} | ${record.summary || "no summary"} | ${record.code}`;
+    })
+    .join("\n");
+
+  return [`Blame summary for ${filePath}`, "", "Authors:", authorSection || "- none", "", "Line annotations:", lineSection].join("\n");
+}
+
 export function fetchWorkingTreeData(cwd) {
   const stagedDiff = getUncheckedCommandOutput(["diff", "--cached"], cwd);
   const unstagedDiff = getUncheckedCommandOutput(["diff"], cwd);
@@ -731,6 +844,47 @@ export function fetchWorkingTreeData(cwd) {
   };
 }
 
+export function fetchBlameData(filePath, cwd, runner = runGitCommand) {
+  const porcelain = runner(["blame", "--line-porcelain", "--", filePath], cwd);
+  const records = parseBlamePorcelain(porcelain);
+  const authorCount = new Set(records.map((record) => `${record.author}|${record.authorMail}`)).size;
+
+  return {
+    analysisType: "blame",
+    targetRef: `blame:${filePath}`,
+    displayRef: filePath,
+    commitId: null,
+    commitCount: records.length,
+    commits: [],
+    commitMessage: `Blame analysis for ${filePath}`,
+    diff: buildBlameAnalysisDiff(filePath, records),
+    filesChanged: [filePath],
+    stats: `${records.length} line annotation${records.length === 1 ? "" : "s"} across ${authorCount} author${authorCount === 1 ? "" : "s"}`
+  };
+}
+
+export function fetchStashData(stashRef = null, cwd, filePath = null, runner = runGitCommand) {
+  const resolvedStashRef = resolveStashRef(stashRef);
+  const fileArgs = filePath ? ["--", filePath] : [];
+  const commitMessage = runner(["log", "-1", "--pretty=format:%gs", resolvedStashRef], cwd);
+  const diff = runner(["stash", "show", "-p", resolvedStashRef, ...fileArgs], cwd);
+  const filesChangedRaw = runner(["stash", "show", "--name-only", resolvedStashRef, ...fileArgs], cwd);
+  const statsRaw = runner(["stash", "show", "--stat", resolvedStashRef, ...fileArgs], cwd);
+
+  return {
+    analysisType: "stash",
+    targetRef: resolvedStashRef,
+    displayRef: filePath ? buildFileScopedDisplayRef(resolvedStashRef, filePath) : resolvedStashRef,
+    commitId: resolvedStashRef,
+    commitCount: 1,
+    commits: [{ hash: resolvedStashRef, subject: commitMessage, body: commitMessage }],
+    commitMessage: commitMessage || `Stash entry ${resolvedStashRef}`,
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
 function fetchSingleCommitData(commitId, cwd, runner) {
   const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
   const diff = runner(["diff", `${commitId}^!`], cwd);
@@ -742,6 +896,27 @@ function fetchSingleCommitData(commitId, cwd, runner) {
     analysisType: "commit",
     targetRef: commitId,
     displayRef: commitId,
+    commitId,
+    commitCount: 1,
+    commits: [{ hash: commitId, subject, body: commitMessage }],
+    commitMessage,
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
+function fetchSingleCommitFileData(commitId, filePath, cwd, runner) {
+  const commitMessage = runner(["log", "-1", "--pretty=format:%B", commitId], cwd);
+  const diff = runner(["diff", `${commitId}^!`, "--", filePath], cwd);
+  const filesChangedRaw = runner(["show", "--pretty=format:", "--name-only", commitId, "--", filePath], cwd);
+  const statsRaw = runner(["show", "--stat", "--oneline", "--format=%h %s", commitId, "--", filePath], cwd);
+  const subject = runner(["log", "-1", "--pretty=format:%s", commitId], cwd);
+
+  return {
+    analysisType: "commit",
+    targetRef: commitId,
+    displayRef: buildFileScopedDisplayRef(commitId, filePath),
     commitId,
     commitCount: 1,
     commits: [{ hash: commitId, subject, body: commitMessage }],
@@ -780,8 +955,42 @@ function fetchRangeData(rangeRef, cwd, runner) {
   };
 }
 
+function fetchRangeFileData(rangeRef, filePath, cwd, runner) {
+  const diff = runner(["diff", rangeRef, "--", filePath], cwd);
+  const filesChangedRaw = runner(["diff", "--name-only", rangeRef, "--", filePath], cwd);
+  const statsRaw = runner(["diff", "--stat", rangeRef, "--", filePath], cwd);
+  const commitLogRaw = runner(
+    ["log", "--reverse", "--pretty=format:%H%x1f%s%x1f%B", rangeRef, "--", filePath],
+    cwd
+  );
+
+  const commits = parseCommitLog(commitLogRaw);
+  if (commits.length === 0) {
+    throw new Error(`No commits found in range ${rangeRef} for file ${filePath}`);
+  }
+
+  return {
+    analysisType: "range",
+    targetRef: rangeRef,
+    displayRef: buildFileScopedDisplayRef(rangeRef, filePath),
+    commitId: null,
+    commitCount: commits.length,
+    commits,
+    commitMessage: buildCommitMessage(commits),
+    diff,
+    filesChanged: parseFilesChanged(filesChangedRaw),
+    stats: parseStatsLine(statsRaw)
+  };
+}
+
 export function fetchCommitData(targetRef, cwd, runner = runGitCommand) {
   return isRangeRef(targetRef)
     ? fetchRangeData(targetRef, cwd, runner)
     : fetchSingleCommitData(targetRef, cwd, runner);
+}
+
+export function fetchCommitDataForFile(targetRef, filePath, cwd, runner = runGitCommand) {
+  return isRangeRef(targetRef)
+    ? fetchRangeFileData(targetRef, filePath, cwd, runner)
+    : fetchSingleCommitFileData(targetRef, filePath, cwd, runner);
 }

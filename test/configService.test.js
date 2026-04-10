@@ -18,6 +18,9 @@ test("getProviderApiKeyField maps supported providers", () => {
   assert.equal(getProviderApiKeyField("gemini"), "GEMINI_API_KEY");
   assert.equal(getProviderApiKeyField("ollama"), "OLLAMA_API_KEY");
   assert.equal(getProviderApiKeyField("chutes"), "CHUTES_API_KEY");
+  assert.equal(getProviderApiKeyField("anthropic"), "ANTHROPIC_API_KEY");
+  assert.equal(getProviderApiKeyField("mistral"), "MISTRAL_API_KEY");
+  assert.equal(getProviderApiKeyField("azure-openai"), "AZURE_OPENAI_API_KEY");
   assert.equal(getProviderApiKeyField("unknown"), null);
 });
 

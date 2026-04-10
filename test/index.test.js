@@ -68,6 +68,13 @@ test("parseArgs handles version flag", () => {
   assert.equal(parsed.commitRef, null);
 });
 
+test("parseArgs handles cost and interactive flags", () => {
+  const parsed = parseArgs(["node", "gitxplain", "HEAD", "--split", "--interactive", "--cost"]);
+
+  assert.equal(parsed.cost, true);
+  assert.equal(parsed.interactive, true);
+});
+
 test("parseArgs handles config set commands", () => {
   const parsed = parseArgs(["node", "gitxplain", "config", "set", "api-key", "secret-token", "--provider", "openai"]);
 
@@ -84,6 +91,14 @@ test("parseArgs handles cache clear commands", () => {
 
   assert.equal(parsed.cacheCommand, true);
   assert.equal(parsed.cacheAction, "clear");
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles cache stats commands", () => {
+  const parsed = parseArgs(["node", "gitxplain", "cache", "stats"]);
+
+  assert.equal(parsed.cacheCommand, true);
+  assert.equal(parsed.cacheAction, "stats");
   assert.equal(parsed.commitRef, null);
 });
 
@@ -109,6 +124,50 @@ test("parseArgs handles no-cache flag", () => {
 
   assert.equal(parsed.commitRef, "HEAD");
   assert.equal(parsed.noCache, true);
+});
+
+test("parseArgs handles blame mode with a file path", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--blame", "cli/index.js", "--markdown"]);
+
+  assert.equal(parsed.mode, "blame");
+  assert.equal(parsed.blameFile, "cli/index.js");
+  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.format, "markdown");
+});
+
+test("parseArgs handles stash mode with an explicit stash ref", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--stash", "stash@{2}", "--diff", "cli/index.js"]);
+
+  assert.equal(parsed.mode, "stash");
+  assert.equal(parsed.stashRef, "stash@{2}");
+  assert.equal(parsed.diffFile, "cli/index.js");
+  assert.equal(parsed.commitRef, null);
+});
+
+test("parseArgs handles diff filtering for commit analysis", () => {
+  const parsed = parseArgs(["node", "gitxplain", "HEAD~1", "--summary", "--diff", "cli/index.js"]);
+
+  assert.equal(parsed.commitRef, "HEAD~1");
+  assert.equal(parsed.mode, "summary");
+  assert.equal(parsed.diffFile, "cli/index.js");
+});
+
+test("parseArgs handles changelog and PR-focused modes", () => {
+  const changelogParsed = parseArgs(["node", "gitxplain", "HEAD~5..HEAD", "--changelog"]);
+  assert.equal(changelogParsed.mode, "changelog");
+  assert.equal(changelogParsed.commitRef, "HEAD~5..HEAD");
+
+  const prParsed = parseArgs(["node", "gitxplain", "--branch", "main", "--pr-description"]);
+  assert.equal(prParsed.mode, "pr-description");
+  assert.equal(prParsed.branchBase, "main");
+});
+
+test("parseArgs handles refactor and test-suggest modes", () => {
+  const refactorParsed = parseArgs(["node", "gitxplain", "HEAD", "--refactor"]);
+  assert.equal(refactorParsed.mode, "refactor");
+
+  const testSuggestParsed = parseArgs(["node", "gitxplain", "HEAD", "--test-suggest"]);
+  assert.equal(testSuggestParsed.mode, "test-suggest");
 });
 
 test("parseArgs handles merge flag execution", () => {

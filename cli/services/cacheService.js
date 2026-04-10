@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -8,6 +8,10 @@ const MAX_CACHE_FILES = 200;
 
 function getCacheDir() {
   return path.join(os.homedir(), ".gitxplain", "cache");
+}
+
+export function getCacheDirectory() {
+  return getCacheDir();
 }
 
 export function createCacheKey(parts) {
@@ -89,4 +93,15 @@ export function writeCache(cacheKey, value) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(getCachePath(cacheKey), JSON.stringify(value, null, 2), "utf8");
   pruneCache();
+}
+
+export function clearCache() {
+  const dir = getCacheDir();
+  const entries = listCacheEntries();
+
+  if (existsSync(dir)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  return entries.length;
 }

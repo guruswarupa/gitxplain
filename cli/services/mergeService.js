@@ -15,6 +15,7 @@ import {
   listBranchCommits,
   listCommitsAfter,
   listTags,
+  listTagTargets,
   localBranchExists,
   resolveTreeSha,
   resolveCommitSha,
@@ -335,21 +336,38 @@ export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
   };
 }
 
-export function selectReleaseTags(sourceCommits, existingTagNames = []) {
+export function selectReleaseTags(sourceCommits, existingTagNames = [], existingTagTargets = []) {
   const windows = selectLatestWindowsPerVersion(buildReleaseWindows(sourceCommits));
   const taggedVersions = extractTaggedVersions(existingTagNames);
+  const targetByVersion = new Map(
+    existingTagTargets
+      .map((tag) => {
+        const version = tag.tagName?.match(TAG_VERSION_PATTERN)?.[1] ?? null;
+        return version ? [version, tag.targetSha] : null;
+      })
+      .filter(Boolean)
+  );
   const tags = windows
-    .filter((window) => !taggedVersions.has(window.version))
     .map((window) => {
       const targetCommit = window.commits.at(-1) ?? null;
+      const existingTargetSha = targetByVersion.get(window.version) ?? null;
+      const windowCommitShas = new Set(window.commits.map((commit) => commit.sha));
+
       return {
         ...window,
         tagName: window.version,
+        existingTargetSha,
+        needsMove:
+          existingTargetSha != null &&
+          targetCommit?.sha != null &&
+          windowCommitShas.has(existingTargetSha) &&
+          existingTargetSha !== targetCommit.sha,
         targetSha: targetCommit?.sha ?? null,
         targetShortSha: targetCommit?.shortSha ?? null,
         targetSubject: targetCommit?.subject ?? null
       };
     })
+    .filter((tag) => !taggedVersions.has(tag.version) || tag.needsMove)
     .filter((tag) => tag.targetSha != null);
 
   return {
@@ -370,7 +388,8 @@ function findLatestTaggedSourceVersion(sourceCommits, taggedVersions) {
 function buildReleaseTagPlanForSource(sourceBranch, sourceRef, cwd) {
   const sourceCommits = listBranchCommits(sourceRef, cwd).map((sha) => inspectCommit(sha, cwd));
   const existingTagNames = listTags(cwd);
-  const selection = selectReleaseTags(sourceCommits, existingTagNames);
+  const existingTagTargets = listTagTargets(cwd);
+  const selection = selectReleaseTags(sourceCommits, existingTagNames, existingTagTargets);
 
   return {
     sourceBranch,
@@ -655,15 +674,18 @@ export function formatReleaseTagPlan(plan) {
   ];
 
   if (plan.tags.length === 0) {
-    lines.push(colorize("No unreleased release tags detected. Nothing to tag.", ANSI.green));
+    lines.push(colorize("No release tag changes detected. Nothing to tag.", ANSI.green));
     return lines.join("\n");
   }
 
   for (const tag of plan.tags) {
     lines.push("");
-    lines.push(colorize(`tag ${tag.tagName}`, ANSI.bold + ANSI.yellow));
+    lines.push(colorize(`${tag.needsMove ? "move tag" : "tag"} ${tag.tagName}`, ANSI.bold + ANSI.yellow));
     lines.push(`${colorize("Commit Range:", ANSI.bold + ANSI.cyan)} ${tag.startRef}..${tag.endRef}`);
     lines.push(`${colorize("Target Commit:", ANSI.bold + ANSI.cyan)} ${tag.targetShortSha} ${tag.targetSubject}`);
+    if (tag.needsMove) {
+      lines.push(`${colorize("Action:", ANSI.bold + ANSI.cyan)} move existing tag to the latest commit for ${tag.tagName}`);
+    }
 
     for (const commit of tag.commits) {
       lines.push(`${colorize(commit.shortSha, ANSI.bold + ANSI.cyan)} ${commit.subject}`);
@@ -817,13 +839,17 @@ export function executeReleaseMerge(plan, cwd) {
 
 export function executeReleaseTagPlan(plan, cwd) {
   if (plan.tags.length === 0) {
-    throw new Error("No unreleased release tags detected. Nothing to tag.");
+    throw new Error("No release tag changes detected. Nothing to tag.");
   }
 
   const createdTags = [];
 
   try {
     for (const tag of plan.tags) {
+      if (tag.needsMove) {
+        gitDeleteTag(tag.tagName, cwd);
+      }
+
       gitCreateAnnotatedTag(tag.tagName, tag.targetSha, `release ${tag.tagName}`, cwd);
       createdTags.push(tag.tagName);
     }

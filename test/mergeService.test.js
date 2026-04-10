@@ -11,6 +11,7 @@ import {
   buildReleaseWindows,
   detectVersionChanges,
   executeReleaseMerge,
+  executeReleaseTagPlan,
   finalizeReleaseMergePlan,
   finalizeReleaseTagPlan,
   formatReleaseMergePlan,
@@ -356,6 +357,37 @@ test("selectReleaseTags keeps only the latest window for repeated versions", () 
 
   assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.1", "0.1.0", "0.1.2"]);
   assert.deepEqual(selection.tags.map((tag) => tag.targetShortSha), ["2222222", "3333333", "4444444"]);
+});
+
+test("selectReleaseTags moves an existing tag when the latest commit for that version changed", () => {
+  const sourceCommits = [
+    {
+      sha: "1111111111111111111111111111111111111111",
+      shortSha: "1111111",
+      subject: "bump 0.1.8",
+      releaseVersion: "0.1.8",
+      versionChange: { from: ["0.1.7"], to: ["0.1.8"], hasVersionChange: true }
+    },
+    {
+      sha: "2222222222222222222222222222222222222222",
+      shortSha: "2222222",
+      subject: "docs for 0.1.8",
+      releaseVersion: "0.1.8",
+      versionChange: { from: [], to: [], hasVersionChange: false }
+    }
+  ];
+
+  const selection = selectReleaseTags(sourceCommits, ["0.1.8"], [
+    {
+      tagName: "0.1.8",
+      targetSha: "1111111111111111111111111111111111111111"
+    }
+  ]);
+
+  assert.deepEqual(selection.taggedVersions, ["0.1.8"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.8"]);
+  assert.equal(selection.tags[0].needsMove, true);
+  assert.equal(selection.tags[0].targetShortSha, "2222222");
 });
 
 test("selectReleaseTagsFromReleaseCommits maps each untagged release commit to a tag", () => {
@@ -868,6 +900,44 @@ test("buildReleaseTagPlan follows source history even when release branch exists
     assert.equal(tagPlan.latestTaggedVersion, "0.1.5");
     assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.7"]);
     assert.equal(tagPlan.tags[0].targetSubject, "chore: bump version to 0.1.7");
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("buildReleaseTagPlan moves an existing tag to the latest commit for the same version", () => {
+  const repoDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-tag-move-existing-"));
+  const runGit = (...args) =>
+    execFileSync("git", args, {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+
+  try {
+    runGit("init", "-b", "main");
+    runGit("config", "user.name", "Test User");
+    runGit("config", "user.email", "test@example.com");
+
+    writeFileSync(path.join(repoDir, "package.json"), `${JSON.stringify({ name: "gitxplain", version: "0.1.8" }, null, 2)}\n`);
+    runGit("add", "package.json");
+    runGit("commit", "-m", "chore: bump version to 0.1.8");
+    runGit("tag", "-a", "0.1.8", "-m", "release 0.1.8");
+
+    writeFileSync(path.join(repoDir, "README.md"), "docs update after 0.1.8\n");
+    runGit("add", "README.md");
+    runGit("commit", "-m", "docs: follow-up for 0.1.8");
+
+    const tagPlan = finalizeReleaseTagPlan(buildReleaseTagPlan(repoDir));
+
+    assert.deepEqual(tagPlan.taggedVersions, ["0.1.8"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.8"]);
+    assert.equal(tagPlan.tags[0].needsMove, true);
+    assert.equal(tagPlan.tags[0].targetSubject, "docs: follow-up for 0.1.8");
+
+    executeReleaseTagPlan(tagPlan, repoDir);
+
+    assert.equal(runGit("rev-list", "-n", "1", "0.1.8"), runGit("rev-parse", "HEAD"));
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }

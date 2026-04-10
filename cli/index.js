@@ -5,9 +5,10 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readFileSync, realpathSync } from "node:fs";
 import { generateExplanation } from "./services/aiService.js";
-import { clearCache } from "./services/cacheService.js";
+import { clearCache, getCacheStats } from "./services/cacheService.js";
 import { loadEnvFile } from "./services/envLoader.js";
 import { copyToClipboard } from "./services/clipboardService.js";
+import { getUsageStats } from "./services/usageService.js";
 import {
   applyConfigEnvironment,
   getProviderApiKeyField,
@@ -19,7 +20,10 @@ import {
 import {
   buildBranchRange,
   deletePaths,
+  fetchBlameData,
   fetchCommitData,
+  fetchCommitDataForFile,
+  fetchStashData,
   fetchWorkingTreeData,
   gitAddFiles,
   gitPull,
@@ -81,6 +85,12 @@ const MODE_FLAGS = new Map([
   ["--lines", "lines"],
   ["--review", "review"],
   ["--security", "security"],
+  ["--refactor", "refactor"],
+  ["--test-suggest", "test-suggest"],
+  ["--pr-description", "pr-description"],
+  ["--changelog", "changelog"],
+  ["--blame", "blame"],
+  ["--stash", "stash"],
   ["--split", "split"],
   ["--merge", "merge"],
   ["--tag", "tag"],
@@ -106,6 +116,12 @@ const ANALYSIS_MODES = new Set([
   "lines",
   "review",
   "security",
+  "refactor",
+  "test-suggest",
+  "pr-description",
+  "changelog",
+  "blame",
+  "stash",
   "split"
 ]);
 
@@ -133,6 +149,8 @@ Usage:
   gitxplain --help
   gitxplain --version
   gitxplain cache clear
+  gitxplain cache stats
+  gitxplain --cost
   gitxplain config set provider <name>
   gitxplain config set api-key <value> [--provider <name>]
   gitxplain config get [key]
@@ -145,6 +163,7 @@ Usage:
   gitxplain --release [status]
   gitxplain --merge
   gitxplain --tag
+  gitxplain --stash [stash-ref]
   gitxplain --log
   gitxplain --status
   gitxplain --pipeline
@@ -158,10 +177,18 @@ Analysis:
   --lines         Walk through the changed code file by file
   --review        Generate review findings, risks, and suggestions
   --security      Focus on security-relevant changes and concerns
+  --refactor      Suggest refactoring opportunities in the change
+  --test-suggest  Suggest tests to add or update for the change
+  --pr-description Generate a ready-to-paste PR description
+  --changelog     Generate changelog-style release notes
+  --blame <file>  Analyze ownership and history for one file with git blame
+  --stash [ref]   Explain a stash entry, defaulting to stash@{0}
   --split         Propose splitting a commit into smaller atomic commits
+  --cost          Show cumulative token usage and estimated cost totals
   --commit        Propose commits for current uncommitted changes
   --execute       Execute a proposed split or commit plan
   --dry-run       Preview the plan without executing it
+  --interactive   Review or edit a split plan before execution
 
 Release:
   --release [status]  Show release branch health and next recommended action
@@ -198,6 +225,7 @@ Output:
   --clipboard
   --stream
   --no-cache
+  --diff <file>
   --max-diff-lines <n>
 
 Comparison:
@@ -213,6 +241,7 @@ Notes:
   If no command or mode is supplied, gitxplain prints this help text.
   Use --provider or --model to override your config or environment for one command.
   Use gitxplain git <args...> to run any native Git subcommand with its normal flags.
+  install-hook supports: post-commit, post-merge, pre-push.
 `);
 }
 
@@ -344,12 +373,26 @@ function handleConfigCommand(parsed) {
 
 function handleCacheCommand(parsed) {
   if (parsed.cacheAction == null) {
-    throw new Error('Usage: gitxplain cache clear');
+    throw new Error('Usage: gitxplain cache <clear|stats>');
   }
 
   if (parsed.cacheAction === "clear") {
     const deletedCount = clearCache();
     console.log(`Cleared ${deletedCount} cache entr${deletedCount === 1 ? "y" : "ies"}.`);
+    return 0;
+  }
+
+  if (parsed.cacheAction === "stats") {
+    const stats = getCacheStats();
+    console.log(
+      [
+        "Cache Stats",
+        `Entries: ${stats.entryCount}`,
+        `Size: ${stats.totalSizeBytes} bytes`,
+        `Oldest: ${stats.oldestEntryIso ?? "n/a"}`,
+        `Newest: ${stats.newestEntryIso ?? "n/a"}`
+      ].join("\n")
+    );
     return 0;
   }
 
@@ -373,7 +416,7 @@ export function parseArgs(argv, options = {}) {
   const subcommand = args[0];
   const knownGitSubcommands = options.gitSubcommands ?? listGitSubcommands();
   const flags = new Set(args.filter((arg) => arg.startsWith("--")));
-  const valueFlags = new Set(["--provider", "--model", "--max-diff-lines", "--branch", "--pr"]);
+  const valueFlags = new Set(["--provider", "--model", "--max-diff-lines", "--branch", "--pr", "--blame", "--stash", "--diff"]);
   const positional = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -418,6 +461,7 @@ export function parseArgs(argv, options = {}) {
     subcommand,
     help: flags.has("--help") || subcommand === "help",
     version: flags.has("--version"),
+    cost: flags.has("--cost"),
     nativeGitCommand: isNativeGitCommand,
     installHook: isInstallHook,
     configCommand: isConfigCommand,
@@ -468,6 +512,9 @@ export function parseArgs(argv, options = {}) {
     provider: getFlagValue(args, "--provider"),
     model: getFlagValue(args, "--model"),
     maxDiffLines: parseNumber(getFlagValue(args, "--max-diff-lines")),
+    blameFile: getFlagValue(args, "--blame"),
+    stashRef: flags.has("--stash") || args.some((arg) => arg.startsWith("--stash=")) ? getFlagValue(args, "--stash") : null,
+    diffFile: getFlagValue(args, "--diff"),
     hasBranchFlag: flags.has("--branch") || args.some((arg) => arg.startsWith("--branch=")),
     branchBase: getFlagValue(args, "--branch"),
     hasPrFlag: flags.has("--pr") || args.some((arg) => arg.startsWith("--pr=")),
@@ -479,6 +526,7 @@ export function parseArgs(argv, options = {}) {
     quiet: flags.has("--quiet"),
     execute: flags.has("--execute"),
     dryRun: flags.has("--dry-run"),
+    interactive: flags.has("--interactive"),
     release: flags.has("--release"),
     log: flags.has("--log"),
     status: flags.has("--status"),
@@ -515,6 +563,67 @@ function resolveRuntimeOptions(parsed, config) {
     noCache: parsed.noCache,
     verbose: parsed.verbose || config.verbose === true,
     quiet: parsed.quiet || config.quiet === true
+  };
+}
+
+function formatUsageStats(stats) {
+  return [
+    "Usage Stats",
+    `Requests: ${stats.requestCount}`,
+    `Input Tokens: ${stats.inputTokens}`,
+    `Output Tokens: ${stats.outputTokens}`,
+    `Total Tokens: ${stats.totalTokens}`,
+    `Estimated Cost: $${stats.estimatedCostUsd.toFixed(6)}`
+  ].join("\n");
+}
+
+async function reviewSplitPlanInteractively(plan) {
+  const editedCommits = [];
+  const deferredFiles = [];
+
+  for (const commit of [...plan.commits].sort((left, right) => left.order - right.order)) {
+    console.log("");
+    console.log(`${commit.order}. ${commit.message}`);
+    console.log(`Files: ${commit.files.join(", ")}`);
+    console.log(`Why: ${commit.description}`);
+
+    const action = (await askQuestion('Action [keep/edit/skip/abort] > ')).trim().toLowerCase();
+
+    if (action === "abort") {
+      return null;
+    }
+
+    if (action === "skip") {
+      deferredFiles.push(...commit.files);
+      continue;
+    }
+
+    if (action === "edit") {
+      const nextMessage = await askQuestion("New commit message (leave blank to keep current) > ");
+      const nextDescription = await askQuestion("New description (leave blank to keep current) > ");
+      editedCommits.push({
+        ...commit,
+        message: nextMessage.trim() === "" ? commit.message : nextMessage.trim(),
+        description: nextDescription.trim() === "" ? commit.description : nextDescription.trim()
+      });
+      continue;
+    }
+
+    editedCommits.push(commit);
+  }
+
+  if (deferredFiles.length > 0) {
+    editedCommits.push({
+      order: editedCommits.length + 1,
+      message: "chore: include deferred split changes",
+      files: deferredFiles,
+      description: "Captures split groups that were skipped during interactive review."
+    });
+  }
+
+  return {
+    ...plan,
+    commits: editedCommits.map((commit, index) => ({ ...commit, order: index + 1 }))
   };
 }
 
@@ -595,6 +704,11 @@ export async function main(argv = process.argv) {
 
   if (parsed.version) {
     console.log(CLI_VERSION);
+    return 0;
+  }
+
+  if (parsed.cost) {
+    console.log(formatUsageStats(getUsageStats()));
     return 0;
   }
 
@@ -832,12 +946,146 @@ export async function main(argv = process.argv) {
 
   const targetRef = resolveTargetRef(parsed, cwd);
 
+  if (parsed.mode === "blame") {
+    if (!parsed.blameFile) {
+      throw new Error("--blame requires a file path.");
+    }
+
+    const commitData = fetchBlameData(parsed.blameFile, cwd);
+    const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
+    let streamStarted = false;
+
+    if (runtimeOptions.stream && !canStream && !runtimeOptions.quiet) {
+      console.error(`Streaming is only supported with plain output. Ignoring --stream for ${runtimeOptions.format} format.`);
+    }
+
+    const { explanation, responseMeta, promptMeta } = await generateExplanation({
+      mode: "blame",
+      commitData,
+      providerOverride: runtimeOptions.provider,
+      modelOverride: runtimeOptions.model,
+      maxDiffLines: runtimeOptions.maxDiffLines,
+      noCache: runtimeOptions.noCache,
+      stream: canStream,
+      onStart: canStream
+        ? ({ promptMeta: streamPromptMeta }) => {
+            if (!runtimeOptions.quiet && !streamStarted) {
+              process.stdout.write(
+                formatPreamble({
+                  mode: "blame",
+                  commitData,
+                  responseMeta: null,
+                  promptMeta: streamPromptMeta,
+                  options: runtimeOptions
+                })
+              );
+              streamStarted = true;
+            }
+          }
+        : null,
+      onChunk: canStream ? (chunk) => process.stdout.write(chunk) : null
+    });
+
+    const renderedOutput = renderFinalOutput({
+      runtimeOptions,
+      mode: "blame",
+      commitData,
+      explanation,
+      responseMeta,
+      promptMeta
+    });
+
+    if (canStream) {
+      process.stdout.write("\n");
+      if (runtimeOptions.verbose) {
+        process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+      }
+    } else {
+      console.log(renderedOutput);
+    }
+
+    if (runtimeOptions.clipboard) {
+      copyToClipboard(renderedOutput);
+      if (!runtimeOptions.quiet) {
+        console.error("Copied output to clipboard.");
+      }
+    }
+
+    return 0;
+  }
+
+  if (parsed.mode === "stash") {
+    const commitData = fetchStashData(parsed.stashRef, cwd, parsed.diffFile);
+    const canStream = runtimeOptions.stream && runtimeOptions.format === "plain";
+    let streamStarted = false;
+
+    if (runtimeOptions.stream && !canStream && !runtimeOptions.quiet) {
+      console.error(`Streaming is only supported with plain output. Ignoring --stream for ${runtimeOptions.format} format.`);
+    }
+
+    const { explanation, responseMeta, promptMeta } = await generateExplanation({
+      mode: "stash",
+      commitData,
+      providerOverride: runtimeOptions.provider,
+      modelOverride: runtimeOptions.model,
+      maxDiffLines: runtimeOptions.maxDiffLines,
+      noCache: runtimeOptions.noCache,
+      stream: canStream,
+      onStart: canStream
+        ? ({ promptMeta: streamPromptMeta }) => {
+            if (!runtimeOptions.quiet && !streamStarted) {
+              process.stdout.write(
+                formatPreamble({
+                  mode: "stash",
+                  commitData,
+                  responseMeta: null,
+                  promptMeta: streamPromptMeta,
+                  options: runtimeOptions
+                })
+              );
+              streamStarted = true;
+            }
+          }
+        : null,
+      onChunk: canStream ? (chunk) => process.stdout.write(chunk) : null
+    });
+
+    const renderedOutput = renderFinalOutput({
+      runtimeOptions,
+      mode: "stash",
+      commitData,
+      explanation,
+      responseMeta,
+      promptMeta
+    });
+
+    if (canStream) {
+      process.stdout.write("\n");
+      if (runtimeOptions.verbose) {
+        process.stdout.write(formatFooter({ responseMeta, promptMeta, options: runtimeOptions }));
+      }
+    } else {
+      console.log(renderedOutput);
+    }
+
+    if (runtimeOptions.clipboard) {
+      copyToClipboard(renderedOutput);
+      if (!runtimeOptions.quiet) {
+        console.error("Copied output to clipboard.");
+      }
+    }
+
+    return 0;
+  }
+
   if (!targetRef) {
     printHelp();
     return 1;
   }
 
-  const commitData = fetchCommitData(targetRef, cwd);
+  const commitData = parsed.diffFile
+    ? fetchCommitDataForFile(targetRef, parsed.diffFile, cwd)
+    : fetchCommitData(targetRef, cwd);
 
   if (mode === "split") {
     if (commitData.analysisType !== "commit") {
@@ -866,6 +1114,17 @@ export async function main(argv = process.argv) {
     console.log(formatSplitPlan(plan));
 
     if (parsed.execute && !parsed.dryRun) {
+      const reviewedPlan = parsed.interactive ? await reviewSplitPlanInteractively(plan) : plan;
+      if (reviewedPlan == null) {
+        console.log("Aborted.");
+        return 0;
+      }
+
+      if (parsed.interactive) {
+        console.log("");
+        console.log(formatSplitPlan(reviewedPlan));
+      }
+
       validateSplitExecutionTarget(commitData.commitId, cwd);
       const confirmed = await askQuestion(
         "\nThis will rewrite git history. Continue? (yes/no) > "
@@ -875,8 +1134,8 @@ export async function main(argv = process.argv) {
         return 0;
       }
 
-      executeSplit(plan, commitData.commitId, cwd);
-      console.log(`\nSplit complete. Created ${plan.commits.length} commits.`);
+      executeSplit(reviewedPlan, commitData.commitId, cwd);
+      console.log(`\nSplit complete. Created ${reviewedPlan.commits.length} commits.`);
     } else {
       console.log("\nThis is a preview. Run with --execute to apply the split.");
     }

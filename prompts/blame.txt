@@ -1,0 +1,29 @@
+Analyze this git blame report for a file and explain ownership patterns.
+
+Context:
+- The input below is not a diff. It is a compact blame summary built from `git blame --line-porcelain`.
+- Focus on who changed which parts of the file, when the major edits happened, and what kinds of changes appear to have shaped the file.
+- Call out concentrated ownership, legacy areas, and spots that may need extra care during onboarding or refactoring.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Blame Report:
+{{diff}}
+
+Return:
+
+1. Ownership Summary:
+- Summarize the main authors or time periods that shaped the file
+
+2. Likely Change Themes:
+- Explain what kinds of changes the major contributors appear to have made
+
+3. Onboarding Notes:
+- Suggest where a new maintainer should read carefully, who to ask first, or what parts look risky or stable

@@ -1,6 +1,7 @@
 import process from "node:process";
 import { createCacheKey, readCache, writeCache } from "./cacheService.js";
 import { buildPrompt } from "./promptService.js";
+import { appendUsageRecord, estimateCostUsd, resolvePricing } from "./usageService.js";
 
 const SUPPORTED_PROVIDERS = new Set([
   "openai",
@@ -8,7 +9,10 @@ const SUPPORTED_PROVIDERS = new Set([
   "openrouter",
   "gemini",
   "ollama",
-  "chutes"
+  "chutes",
+  "anthropic",
+  "mistral",
+  "azure-openai"
 ]);
 const SYSTEM_PROMPT = "You explain Git commits clearly and accurately for developers.";
 const REQUEST_TIMEOUT_MS = 30000;
@@ -74,6 +78,36 @@ export function getProviderConfig(providerOverride, modelOverride) {
     };
   }
 
+  if (provider === "anthropic") {
+    return {
+      provider,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      baseUrl: process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com/v1",
+      model: modelOverride ?? process.env.ANTHROPIC_MODEL ?? process.env.LLM_MODEL ?? "claude-3-5-haiku-latest"
+    };
+  }
+
+  if (provider === "mistral") {
+    return {
+      provider,
+      apiKey: process.env.MISTRAL_API_KEY,
+      baseUrl: process.env.MISTRAL_BASE_URL ?? "https://api.mistral.ai/v1",
+      model: modelOverride ?? process.env.MISTRAL_MODEL ?? process.env.LLM_MODEL ?? "mistral-small-latest"
+    };
+  }
+
+  if (provider === "azure-openai") {
+    const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? modelOverride ?? process.env.AZURE_OPENAI_MODEL ?? process.env.LLM_MODEL;
+    return {
+      provider,
+      apiKey: process.env.AZURE_OPENAI_API_KEY,
+      baseUrl: process.env.AZURE_OPENAI_BASE_URL,
+      model: process.env.AZURE_OPENAI_MODEL ?? deployment,
+      deployment,
+      apiVersion: process.env.AZURE_OPENAI_API_VERSION ?? "2024-10-21"
+    };
+  }
+
   return {
     provider,
     apiKey: process.env.OLLAMA_API_KEY ?? "ollama",
@@ -87,16 +121,32 @@ export function validateProviderConfig(config) {
     throw new Error(`No model configured for provider "${config.provider}".`);
   }
 
+  if (config.provider === "azure-openai") {
+    if (!config.baseUrl) {
+      throw new Error('Missing base URL for provider "azure-openai". Set AZURE_OPENAI_BASE_URL.');
+    }
+
+    if (!config.deployment) {
+      throw new Error('Missing deployment for provider "azure-openai". Set AZURE_OPENAI_DEPLOYMENT.');
+    }
+  }
+
   if (config.provider !== "ollama" && !config.apiKey) {
     throw new Error(`Missing API key for provider "${config.provider}".`);
   }
 }
 
 function buildOpenAICompatibleHeaders(config) {
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${config.apiKey}`
-  };
+  const headers =
+    config.provider === "azure-openai"
+      ? {
+          "Content-Type": "application/json",
+          "api-key": config.apiKey
+        }
+      : {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`
+        };
 
   if (config.provider === "openrouter") {
     headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL ?? "https://github.com";
@@ -120,6 +170,14 @@ function extractGeminiText(data) {
     .map((part) => part.text)
     .filter(Boolean)
     .join("\n");
+}
+
+function extractAnthropicContent(data) {
+  return (data.content ?? [])
+    .filter((item) => item?.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
 }
 
 function sleep(ms) {
@@ -224,24 +282,33 @@ async function consumeSseStream(response, getChunkText, onChunk) {
 
 async function requestOpenAICompatible(config, prompt, options) {
   const startedAt = Date.now();
-  const response = await fetchWithRetry(`${config.baseUrl}/chat/completions`, {
+  const endpoint =
+    config.provider === "azure-openai"
+      ? `${config.baseUrl}/openai/deployments/${encodeURIComponent(config.deployment)}/chat/completions?api-version=${encodeURIComponent(config.apiVersion)}`
+      : `${config.baseUrl}/chat/completions`;
+  const body = {
+    messages: [
+      {
+        role: "system",
+        content: SYSTEM_PROMPT
+      },
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    temperature: 0.2,
+    stream: options.stream === true
+  };
+
+  if (config.provider !== "azure-openai") {
+    body.model = config.model;
+  }
+
+  const response = await fetchWithRetry(endpoint, {
     method: "POST",
     headers: buildOpenAICompatibleHeaders(config),
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.2,
-      stream: options.stream === true
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -288,6 +355,73 @@ async function requestOpenAICompatible(config, prompt, options) {
       cacheHit: false,
       latencyMs: Date.now() - startedAt,
       usage: extractUsage(data)
+    }
+  };
+}
+
+async function requestAnthropic(config, prompt, options) {
+  const startedAt = Date.now();
+  const response = await fetchWithRetry(`${config.baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: config.model,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 2048,
+      temperature: 0.2,
+      stream: options.stream === true
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`anthropic request failed (${response.status}): ${errorText}`);
+  }
+
+  if (options.stream) {
+    const explanation = await consumeSseStream(
+      response,
+      (data) => {
+        if (data.type === "content_block_delta") {
+          return data.delta?.text ?? "";
+        }
+
+        return "";
+      },
+      options.onChunk
+    );
+
+    return {
+      explanation,
+      responseMeta: {
+        provider: config.provider,
+        model: config.model,
+        cacheHit: false,
+        latencyMs: Date.now() - startedAt,
+        usage: null
+      }
+    };
+  }
+
+  const data = await response.json();
+  return {
+    explanation: extractAnthropicContent(data) || "No explanation returned by the model.",
+    responseMeta: {
+      provider: config.provider,
+      model: config.model,
+      cacheHit: false,
+      latencyMs: Date.now() - startedAt,
+      usage: data.usage ?? null
     }
   };
 }
@@ -404,7 +538,20 @@ export async function generateExplanation({
   const result =
     config.provider === "gemini"
       ? await requestGemini(config, prompt, requestOptions)
-      : await requestOpenAICompatible(config, prompt, requestOptions);
+      : config.provider === "anthropic"
+        ? await requestAnthropic(config, prompt, requestOptions)
+        : await requestOpenAICompatible(config, prompt, requestOptions);
+
+  const estimatedCostUsd = estimateCostUsd(result.responseMeta.usage, resolvePricing(config));
+  result.responseMeta.estimatedCostUsd = estimatedCostUsd;
+
+  appendUsageRecord({
+    provider: result.responseMeta.provider,
+    model: result.responseMeta.model,
+    usage: result.responseMeta.usage,
+    latencyMs: result.responseMeta.latencyMs,
+    estimatedCostUsd
+  });
 
   if (!noCache) {
     writeCache(cacheKey, {

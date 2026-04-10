@@ -22,7 +22,8 @@ const PROMPT_FILES = {
   "test-suggest": "test-suggest.txt",
   "pr-description": "pr-description.txt",
   blame: "blame.txt",
-  stash: "stash.txt"
+  stash: "stash.txt",
+  conflict: "conflict.txt"
 };
 
 function fillTemplate(template, values) {

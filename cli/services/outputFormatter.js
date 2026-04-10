@@ -66,6 +66,10 @@ function formatTargetLabel(commitData) {
     return "Stash";
   }
 
+  if (commitData.analysisType === "conflict") {
+    return "Conflict";
+  }
+
   return "Commit";
 }
 

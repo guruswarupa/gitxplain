@@ -15,6 +15,8 @@ Supported providers:
 
 - Explains what a commit does, why it exists, and how the fix works
 - Supports focused output modes like summary, issue, fix, impact, review, security, and line-by-line walkthroughs
+- Supports blame summaries, changelog drafting, PR description drafting, refactor suggestions, and test suggestion modes
+- Supports stash explanation and single-file diff deep dives
 - Supports AI-assisted commit splitting plans, with optional execution for the latest commit
 - Supports release-branch merge previews driven by detected version bumps in diffs
 - Supports automatic release tagging driven by the same version-bump detection used for release merges
@@ -68,6 +70,13 @@ Show the built-in command reference.
 
 ```bash
 gitxplain --help
+```
+
+Inspect cache usage or clear cached responses.
+
+```bash
+gitxplain cache stats
+gitxplain cache clear
 ```
 
 Save the default AI provider.
@@ -142,6 +151,13 @@ Preview or create release tags.
 gitxplain --tag
 ```
 
+Explain the latest stash, or a specific stash entry.
+
+```bash
+gitxplain --stash
+gitxplain --stash stash@{2}
+```
+
 Print repository log output.
 
 ```bash
@@ -208,6 +224,42 @@ Focus on security-relevant changes.
 
 ```bash
 --security
+```
+
+Suggest refactoring follow-ups.
+
+```bash
+--refactor
+```
+
+Suggest tests to add or update.
+
+```bash
+--test-suggest
+```
+
+Generate a PR description.
+
+```bash
+--pr-description
+```
+
+Generate changelog-style notes.
+
+```bash
+--changelog
+```
+
+Analyze file ownership with git blame.
+
+```bash
+--blame <file>
+```
+
+Focus analysis on one changed file.
+
+```bash
+--diff <file>
 ```
 
 Propose splitting a commit into smaller commits.
@@ -398,6 +450,12 @@ Stream model output as it arrives.
 --stream
 ```
 
+Bypass cached responses for one command.
+
+```bash
+--no-cache
+```
+
 Limit diff size before sending it to the model.
 
 ```bash
@@ -423,6 +481,13 @@ gitxplain a1b2c3d --summary
 gitxplain HEAD~1 --lines
 gitxplain HEAD~5..HEAD --markdown
 gitxplain --branch main --review
+gitxplain --branch main --pr-description
+gitxplain HEAD~10..HEAD --changelog
+gitxplain HEAD --refactor
+gitxplain HEAD --test-suggest
+gitxplain --blame cli/index.js
+gitxplain --stash
+gitxplain HEAD~5..HEAD --lines --diff cli/index.js
 ```
 
 If you do not want to link it globally, you can still run it locally:
@@ -441,6 +506,13 @@ node ./cli/index.js HEAD~1 --full
 - `--lines`: file-by-file, line-by-line walkthrough of the changed code
 - `--review`: code review findings with actionable suggestions
 - `--security`: security-focused analysis of the change
+- `--refactor`: suggest maintainability-focused refactors visible in the change
+- `--test-suggest`: suggest the most valuable tests to add or update
+- `--pr-description`: draft a ready-to-paste pull request description
+- `--changelog`: generate changelog-style release notes from the change set
+- `--blame <file>`: summarize ownership and change history for one file using `git blame`
+- `--stash [ref]`: explain what is stored in a stash entry, defaulting to `stash@{0}`
+- `--diff <file>`: focus commit or range analysis on a single file
 - `--split`: propose how to split a commit into multiple atomic commits
 - `--merge`: preview or execute a merge into the `release` branch based on detected version bumps
 - `--tag`: preview or create release tags from the same detected version windows
@@ -471,6 +543,8 @@ Run a few common Git actions directly through `gitxplain`:
 
 ```bash
 gitxplain --status
+gitxplain cache stats
+gitxplain cache clear
 gitxplain add README.md
 gitxplain remove README.md
 gitxplain remove hard

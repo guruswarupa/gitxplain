@@ -61,6 +61,40 @@ test("parseCommitPlan parses fenced JSON", () => {
   assert.deepEqual(plan.commits, []);
 });
 
+test("parseCommitPlan parses JSON inside non-json fenced blocks", () => {
+  const plan = parseCommitPlan(`\`\`\`javascript
+{
+  "working_tree_summary": "No meaningful changes detected",
+  "reason_to_commit": null,
+  "commits": []
+}
+\`\`\``);
+
+  assert.equal(plan.reason_to_commit, null);
+  assert.deepEqual(plan.commits, []);
+});
+
+test("parseCommitPlan falls back to structured text plans", () => {
+  const plan = parseCommitPlan(`
+Working Tree Summary: Adds validation logic and tests.
+Reason To Commit: The implementation and tests should be committed separately.
+
+1. feat: add validation helper
+Files: src/validation.js
+Why: Adds the validation helper.
+
+2. test: add validation coverage
+Files: test/validation.test.js
+Why: Adds tests for the helper.
+`);
+
+  assert.equal(plan.working_tree_summary, "Adds validation logic and tests.");
+  assert.equal(plan.reason_to_commit, "The implementation and tests should be committed separately.");
+  assert.equal(plan.commits.length, 2);
+  assert.equal(plan.commits[0].message, "feat: add validation helper");
+  assert.deepEqual(plan.commits[0].files, ["src/validation.js"]);
+});
+
 test("parseCommitPlan throws on invalid JSON", () => {
   assert.throws(() => parseCommitPlan("{broken json}"), /Failed to parse commit plan JSON/);
 });

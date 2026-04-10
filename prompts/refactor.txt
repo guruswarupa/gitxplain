@@ -1,0 +1,29 @@
+Review this change for refactoring opportunities.
+
+Commit Message:
+{{commit_message}}
+
+Files Changed:
+{{files_changed}}
+
+Stats:
+{{stats}}
+
+Change Hints:
+{{change_hints}}
+
+Diff:
+{{diff}}
+
+Return:
+
+1. Refactor Opportunities:
+- List concrete refactors suggested by the code shown
+- Focus on duplication, naming, cohesion, dead code, control flow, error handling, and API clarity
+- If there are no worthwhile refactors, say so explicitly
+
+2. Why These Matter:
+- Explain the maintenance or correctness benefits of the top opportunities
+
+3. Safe Next Steps:
+- Suggest a small, practical follow-up plan that avoids mixing refactors with risky behavior changes

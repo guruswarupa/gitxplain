@@ -354,7 +354,7 @@ test("selectReleaseTags keeps only the latest window for repeated versions", () 
 
   const selection = selectReleaseTags(sourceCommits, []);
 
-  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["v0.1.1", "v0.1.0", "v0.1.2"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.1", "0.1.0", "0.1.2"]);
   assert.deepEqual(selection.tags.map((tag) => tag.targetShortSha), ["2222222", "3333333", "4444444"]);
 });
 

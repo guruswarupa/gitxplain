@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function loadEnvFile() {
+export function loadEnvFile(cwd = process.cwd()) {
   try {
     // Get the directory of the CLI installation
     const __filename = fileURLToPath(import.meta.url);
@@ -11,7 +11,7 @@ export function loadEnvFile() {
     const envPath = path.join(projectDir, ".env");
 
     // Also check current working directory
-    const cwdEnvPath = path.join(process.cwd(), ".env");
+    const cwdEnvPath = path.join(cwd, ".env");
     const finalEnvPath = fs.existsSync(envPath) ? envPath : (fs.existsSync(cwdEnvPath) ? cwdEnvPath : null);
 
     if (finalEnvPath && fs.existsSync(finalEnvPath)) {

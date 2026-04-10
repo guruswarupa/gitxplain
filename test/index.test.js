@@ -61,6 +61,17 @@ test("parseArgs handles help and install-hook commands", () => {
   assert.equal(hookParsed.hookName, "post-commit");
 });
 
+test("parseArgs handles config set commands", () => {
+  const parsed = parseArgs(["node", "gitxplain", "config", "set", "api-key", "secret-token", "--provider", "openai"]);
+
+  assert.equal(parsed.configCommand, true);
+  assert.equal(parsed.configAction, "set");
+  assert.equal(parsed.configKey, "api-key");
+  assert.equal(parsed.configValue, "secret-token");
+  assert.equal(parsed.provider, "openai");
+  assert.equal(parsed.commitRef, null);
+});
+
 test("parseArgs handles empty invocation", () => {
   const parsed = parseArgs(["node", "gitxplain"]);
 
@@ -87,12 +98,13 @@ test("parseArgs handles merge flag execution", () => {
   assert.equal(parsed.commitRef, null);
 });
 
-test("parseArgs handles merge subcommand", () => {
+test("parseArgs treats merge subcommand as native git passthrough", () => {
   const parsed = parseArgs(["node", "gitxplain", "merge"]);
 
-  assert.equal(parsed.mergeCommand, true);
+  assert.equal(parsed.nativeGitCommand, true);
+  assert.deepEqual(parsed.nativeGitArgs, ["merge"]);
+  assert.equal(parsed.mergeCommand, false);
   assert.equal(parsed.commitRef, null);
-  assert.equal(parsed.mode, null);
 });
 
 test("parseArgs handles tag flag execution", () => {
@@ -104,29 +116,32 @@ test("parseArgs handles tag flag execution", () => {
   assert.equal(parsed.commitRef, null);
 });
 
-test("parseArgs handles tag subcommand", () => {
+test("parseArgs treats tag subcommand as native git passthrough", () => {
   const parsed = parseArgs(["node", "gitxplain", "tag"]);
 
-  assert.equal(parsed.tagCommand, true);
+  assert.equal(parsed.nativeGitCommand, true);
+  assert.deepEqual(parsed.nativeGitArgs, ["tag"]);
+  assert.equal(parsed.tagCommand, false);
   assert.equal(parsed.commitRef, null);
-  assert.equal(parsed.mode, null);
 });
 
-test("parseArgs handles release status subcommand", () => {
-  const parsed = parseArgs(["node", "gitxplain", "release", "status"]);
+test("parseArgs handles release status flag", () => {
+  const parsed = parseArgs(["node", "gitxplain", "--release", "status"]);
 
   assert.equal(parsed.releaseCommand, true);
   assert.equal(parsed.releaseAction, "status");
   assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.release, true);
 });
 
-test("parseArgs handles repository log subcommand", () => {
+test("parseArgs treats repository log subcommand as native git passthrough", () => {
   const parsed = parseArgs(["node", "gitxplain", "log"]);
 
-  assert.equal(parsed.logCommand, true);
+  assert.equal(parsed.nativeGitCommand, true);
+  assert.deepEqual(parsed.nativeGitArgs, ["log"]);
+  assert.equal(parsed.logCommand, false);
   assert.equal(parsed.log, false);
   assert.equal(parsed.commitRef, null);
-  assert.equal(parsed.mode, null);
 });
 
 test("parseArgs handles repository log flag", () => {
@@ -138,13 +153,14 @@ test("parseArgs handles repository log flag", () => {
   assert.equal(parsed.mode, "log");
 });
 
-test("parseArgs handles repository status subcommand", () => {
+test("parseArgs treats repository status subcommand as native git passthrough", () => {
   const parsed = parseArgs(["node", "gitxplain", "status"]);
 
-  assert.equal(parsed.statusCommand, true);
+  assert.equal(parsed.nativeGitCommand, true);
+  assert.deepEqual(parsed.nativeGitArgs, ["status"]);
+  assert.equal(parsed.statusCommand, false);
   assert.equal(parsed.status, false);
   assert.equal(parsed.commitRef, null);
-  assert.equal(parsed.mode, null);
 });
 
 test("parseArgs handles repository status flag", () => {
@@ -156,11 +172,11 @@ test("parseArgs handles repository status flag", () => {
   assert.equal(parsed.mode, "status");
 });
 
-test("parseArgs handles pipeline subcommand", () => {
+test("parseArgs treats pipeline subcommand as a commit ref without the flag", () => {
   const parsed = parseArgs(["node", "gitxplain", "pipeline"]);
 
-  assert.equal(parsed.pipelineCommand, true);
-  assert.equal(parsed.commitRef, null);
+  assert.equal(parsed.pipelineCommand, false);
+  assert.equal(parsed.commitRef, "pipeline");
   assert.equal(parsed.nativeGitCommand, false);
 });
 
@@ -247,9 +263,11 @@ test("parseArgs handles pull command with optional remote and branch", () => {
   assert.equal(parsed.commitRef, null);
 });
 
-test("parseArgs handles commit subcommand and flag", () => {
+test("parseArgs treats commit subcommand as native git passthrough and keeps --commit mode", () => {
   const commandParsed = parseArgs(["node", "gitxplain", "commit"]);
-  assert.equal(commandParsed.commitCommand, true);
+  assert.equal(commandParsed.nativeGitCommand, true);
+  assert.deepEqual(commandParsed.nativeGitArgs, ["commit"]);
+  assert.equal(commandParsed.commitCommand, false);
   assert.equal(commandParsed.commitRef, null);
 
   const flagParsed = parseArgs(["node", "gitxplain", "--commit", "--execute"]);

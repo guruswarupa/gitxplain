@@ -484,7 +484,7 @@ test("formatReleaseStatus renders release health sections", () => {
     tagPlan: {
       tags: [{ tagName: "0.1.2", targetShortSha: "ccccccc", targetSubject: "release 0.1.2" }]
     },
-    nextRecommendedAction: "Run `gitxplain merge --execute` first, then `gitxplain tag --execute` to finish tagging release commits."
+    nextRecommendedAction: "Run `gitxplain --merge --execute` first, then `gitxplain --tag --execute` to finish tagging release commits."
   });
 
   assert.match(output, /Release Status/);

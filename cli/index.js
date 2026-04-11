@@ -689,8 +689,16 @@ async function runPipelineCommand(cwd) {
     return 0;
   }
 
-  const { writtenFiles, notes } = writePipelineFiles(cwd, analysis, selection);
-  console.log(`\nCreated workflow files: ${writtenFiles.join(", ")}`);
+  const { writtenFiles, updatedFiles, unchangedFiles, notes } = writePipelineFiles(cwd, analysis, selection);
+
+  if (updatedFiles.length === 0 && unchangedFiles.length > 0) {
+    console.log(`\nWorkflow files already matched the current template: ${unchangedFiles.join(", ")}`);
+  } else if (updatedFiles.length > 0 && unchangedFiles.length === 0) {
+    console.log(`\nUpdated workflow files: ${updatedFiles.join(", ")}`);
+  } else {
+    console.log(`\nUpdated workflow files: ${updatedFiles.join(", ")}`);
+    console.log(`Unchanged workflow files: ${unchangedFiles.join(", ")}`);
+  }
 
   if (notes.length > 0) {
     console.log(`\n${notes.join("\n")}`);

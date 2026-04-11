@@ -33,6 +33,10 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function formatVersionTag(version) {
+  return `v${version}`;
+}
+
 function extractVersions(line) {
   return unique(line.match(VERSION_PATTERN) ?? []);
 }
@@ -319,23 +323,26 @@ export function selectReleaseWindows(sourceCommits, releaseCommits = []) {
 export function selectReleaseTags(sourceCommits, existingTagNames = [], existingTagTargets = []) {
   const windows = selectLatestWindowsPerVersion(buildReleaseWindows(sourceCommits));
   const taggedVersions = extractTaggedVersions(existingTagNames);
-  const targetByVersion = new Map(
+  const existingTagByVersion = new Map(
     existingTagTargets
       .map((tag) => {
         const version = tag.tagName?.match(TAG_VERSION_PATTERN)?.[1] ?? null;
-        return version ? [version, tag.targetSha] : null;
+        return version ? [version, tag] : null;
       })
       .filter(Boolean)
   );
   const tags = windows
     .map((window) => {
       const targetCommit = window.commits.at(-1) ?? null;
-      const existingTargetSha = targetByVersion.get(window.version) ?? null;
+      const existingTag = existingTagByVersion.get(window.version) ?? null;
+      const existingTargetSha = existingTag?.targetSha ?? null;
       const windowCommitShas = new Set(window.commits.map((commit) => commit.sha));
 
       return {
         ...window,
-        tagName: window.version,
+        version: window.version,
+        tagName: existingTag?.tagName ?? formatVersionTag(window.version),
+        existingTagName: existingTag?.tagName ?? null,
         existingTargetSha,
         needsMove:
           existingTargetSha != null &&
@@ -394,7 +401,7 @@ export function selectReleaseTagsFromReleaseCommits(releaseCommits, existingTagN
     .filter((entry) => !taggedVersions.has(entry.version))
     .map(({ commit, version }) => ({
       version,
-      tagName: version,
+      tagName: formatVersionTag(version),
       startRef: commit.shortSha,
       endRef: commit.shortSha,
       targetSha: commit.sha,
@@ -827,10 +834,10 @@ export function executeReleaseTagPlan(plan, cwd) {
   try {
     for (const tag of plan.tags) {
       if (tag.needsMove) {
-        gitDeleteTag(tag.tagName, cwd);
+        gitDeleteTag(tag.existingTagName ?? tag.tagName, cwd);
       }
 
-      gitCreateAnnotatedTag(tag.tagName, tag.targetSha, `release ${tag.tagName}`, cwd);
+      gitCreateAnnotatedTag(tag.tagName, tag.targetSha, `release ${tag.version ?? tag.tagName.replace(/^v/, "")}`, cwd);
       createdTags.push(tag.tagName);
     }
   } catch (error) {

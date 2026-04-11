@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseArgs } from "../cli/index.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { main, parseArgs } from "../cli/index.js";
 
 test("parseArgs handles commit mode and provider overrides", () => {
   const parsed = parseArgs([
@@ -269,6 +273,42 @@ test("parseArgs handles pipeline flag", () => {
   assert.equal(parsed.pipelineCommand, true);
   assert.equal(parsed.mode, "pipeline");
   assert.equal(parsed.commitRef, null);
+});
+
+test("main routes --pipeline without falling back to help", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "gitxplain-main-pipeline-"));
+  const originalCwd = process.cwd;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const logs = [];
+  const errors = [];
+
+  try {
+    execFileSync("git", ["init"], {
+      cwd: tempDir,
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+
+    process.cwd = () => tempDir;
+    console.log = (...args) => {
+      logs.push(args.join(" "));
+    };
+    console.error = (...args) => {
+      errors.push(args.join(" "));
+    };
+
+    const result = await main(["node", "gitxplain", "--pipeline"]);
+
+    assert.equal(result, 1);
+    assert.equal(logs.some((line) => line.includes("Usage:")), false);
+    assert.equal(logs.some((line) => line.includes("No supported Node, Python, Go, Rust, or Gradle project files were detected.")), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    process.cwd = originalCwd;
+    console.log = originalLog;
+    console.error = originalError;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("parseArgs handles add command with multiple paths", () => {

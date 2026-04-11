@@ -765,6 +765,10 @@ export async function main(argv = process.argv) {
     return 0;
   }
 
+  if (parsed.pipelineCommand) {
+    return runPipelineCommand(cwd);
+  }
+
   if (
     parsed.addCommand ||
     parsed.removeCommand ||

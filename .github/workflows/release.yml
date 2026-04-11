@@ -1,49 +1,37 @@
 name: Release
-
 on:
   push:
     tags:
-      - "v*"
-
+      - 'v*'
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
           cache: npm
-          registry-url: https://registry.npmjs.org
-
+      - name: Install dependencies
+        run: npm ci
       - name: Derive release metadata
         id: meta
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "deb_path=dist/gitxplain_${VERSION}_all.deb" >> "${GITHUB_OUTPUT}"
-
+      - name: Test
+        run: npm test
       - name: Build Debian package
         run: ./scripts/build-deb.sh
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm test
-
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish
-
       - name: Compute npm tarball SHA-256
         id: npm
         run: |
@@ -53,14 +41,12 @@ jobs:
           SHA256="$(sha256sum "gitxplain-${VERSION}.tgz" | awk '{print $1}')"
           echo "tarball_url=${TARBALL_URL}" >> "${GITHUB_OUTPUT}"
           echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
-
-      - name: Check out Homebrew tap
+      - name: Checkout Homebrew tap
         uses: actions/checkout@v4
         with:
           repository: guruswarupa/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
-
       - name: Update Homebrew formula
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
@@ -88,7 +74,6 @@ jobs:
             end
           end
           EOF
-
       - name: Commit and push Homebrew tap changes
         working-directory: homebrew-tap
         run: |
@@ -101,12 +86,10 @@ jobs:
           fi
           git commit -m "gitxplain ${GITHUB_REF_NAME}"
           git push
-
       - name: Create GitHub release and upload Debian package
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.meta.outputs.deb_path }}
-
       - name: Print AUR update instructions
         run: |
           VERSION="${{ steps.meta.outputs.version }}"

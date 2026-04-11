@@ -330,7 +330,9 @@ function buildNodeSetupStep(nodeVersion, packageManager = "npm") {
       "        uses: actions/setup-node@v4",
       "        with:",
       "          node-version-file: .nvmrc",
-      `          cache: ${packageManager}`
+      `          cache: ${packageManager}`,
+      "          registry-url: 'https://registry.npmjs.org'",
+      "          always-auth: true"
     ].join("\n");
   }
 
@@ -339,7 +341,9 @@ function buildNodeSetupStep(nodeVersion, packageManager = "npm") {
     "        uses: actions/setup-node@v4",
     "        with:",
     `          node-version: '${nodeVersion.value}'`,
-    `          cache: ${packageManager}`
+    `          cache: ${packageManager}`,
+    "          registry-url: 'https://registry.npmjs.org'",
+    "          always-auth: true"
   ].join("\n");
 }
 
@@ -663,6 +667,17 @@ export function buildReleaseWorkflow(context) {
         context.commands.test ? formatRunStep("Test", context.commands.test) : "",
         context.commands.build ? formatRunStep("Build", context.commands.build) : "",
         packaging.deb ? formatRunStep("Build Debian package", "./scripts/build-deb.sh") : "",
+        "      - name: Verify npm token",
+        "        env:",
+        "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+        "        run: |",
+        "          if [ -z \"${NODE_AUTH_TOKEN}\" ]; then",
+        "            echo \"NPM_TOKEN is not configured for this repository.\"",
+        "            echo \"Add it in GitHub: Settings -> Secrets and variables -> Actions -> New repository secret.\"",
+        "            exit 1",
+        "          fi",
+        "          printf \"//registry.npmjs.org/:_authToken=%s\\n\" \"${NODE_AUTH_TOKEN}\" > \"${HOME}/.npmrc\"",
+        "          npm whoami",
         "      - name: Publish to npm",
         "        env:",
         "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
@@ -770,6 +785,17 @@ export function buildReleaseWorkflow(context) {
       buildNodeReleaseSetup(context),
       context.commands.test ? formatRunStep("Test", context.commands.test) : "",
       context.commands.build ? formatRunStep("Build", context.commands.build) : "",
+      "      - name: Verify npm token",
+      "        env:",
+      "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+      "        run: |",
+      "          if [ -z \"${NODE_AUTH_TOKEN}\" ]; then",
+      "            echo \"NPM_TOKEN is not configured for this repository.\"",
+      "            echo \"Add it in GitHub: Settings -> Secrets and variables -> Actions -> New repository secret.\"",
+      "            exit 1",
+      "          fi",
+      "          printf \"//registry.npmjs.org/:_authToken=%s\\n\" \"${NODE_AUTH_TOKEN}\" > \"${HOME}/.npmrc\"",
+      "          npm whoami",
       "      - name: Publish to npm",
       "        env:",
       "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",

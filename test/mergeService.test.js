@@ -290,7 +290,7 @@ test("selectReleaseTags maps each unreleased version to the release window end c
 
   assert.deepEqual(selection.taggedVersions, ["0.1.1"]);
   assert.equal(selection.tags.length, 1);
-  assert.equal(selection.tags[0].tagName, "0.1.2");
+  assert.equal(selection.tags[0].tagName, "v0.1.2");
   assert.equal(selection.tags[0].targetSha, "4444444444444444444444444444444444444444");
   assert.equal(selection.tags[0].targetShortSha, "4444444");
 });
@@ -317,7 +317,7 @@ test("selectReleaseTags keeps direct version jumps without inventing intermediat
 
   assert.deepEqual(selection.taggedVersions, ["0.1.5"]);
   assert.equal(selection.latestDetectedVersion, "0.1.7");
-  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.7"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["v0.1.7"]);
   assert.equal(selection.tags[0].targetShortSha, "2222222");
 });
 
@@ -355,7 +355,7 @@ test("selectReleaseTags keeps only the latest window for repeated versions", () 
 
   const selection = selectReleaseTags(sourceCommits, []);
 
-  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.1", "0.1.0", "0.1.2"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["v0.1.1", "v0.1.0", "v0.1.2"]);
   assert.deepEqual(selection.tags.map((tag) => tag.targetShortSha), ["2222222", "3333333", "4444444"]);
 });
 
@@ -416,7 +416,7 @@ test("selectReleaseTagsFromReleaseCommits maps each untagged release commit to a
 
   assert.deepEqual(selection.taggedVersions, ["0.1.1"]);
   assert.equal(selection.latestDetectedVersion, "0.1.0");
-  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["0.1.2", "0.1.0"]);
+  assert.deepEqual(selection.tags.map((tag) => tag.tagName), ["v0.1.2", "v0.1.0"]);
   assert.equal(selection.tags[0].targetSha, "1111111111111111111111111111111111111111");
   assert.equal(selection.tags[1].targetSha, "3333333333333333333333333333333333333333");
 });
@@ -465,7 +465,7 @@ test("formatReleaseTagPlan renders release tag targets", () => {
     latestDetectedVersion: "0.1.2",
     tags: [
       {
-        tagName: "0.1.2",
+        tagName: "v0.1.2",
         version: "0.1.2",
         startRef: "3333333",
         endRef: "4444444",
@@ -490,7 +490,7 @@ test("formatReleaseTagPlan renders release tag targets", () => {
   const output = formatReleaseTagPlan(plan);
 
   assert.match(output, /Release Tag Plan/);
-  assert.match(output, /tag 0\.1\.2/);
+  assert.match(output, /tag v0\.1\.2/);
   assert.match(output, /Target Commit: 4444444 chore: bump to 0\.1\.2/);
 });
 
@@ -504,7 +504,7 @@ test("formatReleaseStatus renders release health sections", () => {
     latestReleaseVersion: "0.1.2",
     latestTaggedVersion: "0.1.1",
     unmergedVersions: ["0.1.3"],
-    missingTagVersions: ["0.1.2"],
+    missingTagVersions: ["v0.1.2"],
     drift: {
       summary: "main and release do not share a merge base. This is expected when the release branch is orphaned.",
       sourceOnlyCount: 4,
@@ -514,7 +514,7 @@ test("formatReleaseStatus renders release health sections", () => {
       windows: [{ version: "0.1.3", startRef: "aaaaaaa", endRef: "bbbbbbb" }]
     },
     tagPlan: {
-      tags: [{ tagName: "0.1.2", targetShortSha: "ccccccc", targetSubject: "release 0.1.2" }]
+      tags: [{ tagName: "v0.1.2", targetShortSha: "ccccccc", targetSubject: "release 0.1.2" }]
     },
     nextRecommendedAction: "Run `gitxplain --merge --execute` first, then `gitxplain --tag --execute` to finish tagging release commits."
   });
@@ -524,7 +524,7 @@ test("formatReleaseStatus renders release health sections", () => {
   assert.match(output, /Unmerged Version Bumps/);
   assert.match(output, /0\.1\.3 \(aaaaaaa\.\.bbbbbbb\)/);
   assert.match(output, /Missing Release Tags/);
-  assert.match(output, /0\.1\.2 -> ccccccc release 0\.1\.2/);
+  assert.match(output, /v0\.1\.2 -> ccccccc release 0\.1\.2/);
   assert.match(output, /Branch Drift/);
   assert.match(output, /Next Recommended Action:/);
 });
@@ -738,7 +738,7 @@ test("buildReleaseTagPlan works when release is disconnected from main", () => {
     assert.equal(tagPlan.releaseExists, true);
     assert.equal(tagPlan.mergeBase, null);
     assert.deepEqual(tagPlan.taggedVersions, ["0.1.0"]);
-    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["v0.1.1"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }
@@ -772,7 +772,7 @@ test("buildReleaseTagPlan works without a release branch", () => {
     assert.equal(tagPlan.baseRef, "HEAD");
     assert.equal(tagPlan.latestDetectedVersion, "0.1.1");
     assert.equal(tagPlan.latestTaggedVersion, "0.1.0");
-    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.1"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["v0.1.1"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
   }
@@ -815,7 +815,7 @@ test("buildReleaseStatus reports missing tags and unmerged versions for an orpha
     assert.equal(status.latestReleaseVersion, "0.1.1");
     assert.equal(status.latestTaggedVersion, "0.1.1");
     assert.deepEqual(status.unmergedVersions, ["0.1.2"]);
-    assert.deepEqual(status.missingTagVersions, ["0.1.0", "0.1.2"]);
+    assert.deepEqual(status.missingTagVersions, ["v0.1.0", "v0.1.2"]);
     assert.equal(status.drift.disconnectedHistory, true);
     assert.match(status.nextRecommendedAction, /merge --execute/);
     assert.match(status.nextRecommendedAction, /tag --execute/);
@@ -860,7 +860,7 @@ test("buildReleaseTagPlan tags every untagged release commit on the release bran
     assert.deepEqual(tagPlan.taggedVersions, ["0.1.1"]);
     assert.equal(tagPlan.latestDetectedVersion, "0.1.2");
     assert.equal(tagPlan.latestTaggedVersion, "0.1.1");
-    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.0", "0.1.2"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["v0.1.0", "v0.1.2"]);
     assert.deepEqual(tagPlan.tags.map((tag) => tag.targetSubject), ["chore: scaffold app", "chore: bump version to 0.1.2"]);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
@@ -898,7 +898,7 @@ test("buildReleaseTagPlan follows source history even when release branch exists
     assert.equal(tagPlan.releaseExists, true);
     assert.equal(tagPlan.latestDetectedVersion, "0.1.7");
     assert.equal(tagPlan.latestTaggedVersion, "0.1.5");
-    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["0.1.7"]);
+    assert.deepEqual(tagPlan.tags.map((tag) => tag.tagName), ["v0.1.7"]);
     assert.equal(tagPlan.tags[0].targetSubject, "chore: bump version to 0.1.7");
   } finally {
     rmSync(repoDir, { recursive: true, force: true });

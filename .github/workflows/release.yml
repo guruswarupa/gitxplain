@@ -1,27 +1,117 @@
 name: Release
+
 on:
   push:
     tags:
-      - '*.*.*'
+      - "v*"
+
+permissions:
+  contents: write
+
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@v4
-      - name: Setup Node.js
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 20
           cache: npm
-          registry-url: 'https://registry.npmjs.org/'
+          registry-url: https://registry.npmjs.org
+
+      - name: Derive release metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "deb_path=dist/gitxplain_${VERSION}_all.deb" >> "${GITHUB_OUTPUT}"
+
+      - name: Build Debian package
+        run: ./scripts/build-deb.sh
+
       - name: Install dependencies
         run: npm ci
-      - name: Test
+
+      - name: Run tests
         run: npm test
+
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish
+
+      - name: Compute npm tarball SHA-256
+        id: npm
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          TARBALL_URL="https://registry.npmjs.org/gitxplain/-/gitxplain-${VERSION}.tgz"
+          curl -fsSL "${TARBALL_URL}" -o "gitxplain-${VERSION}.tgz"
+          SHA256="$(sha256sum "gitxplain-${VERSION}.tgz" | awk '{print $1}')"
+          echo "tarball_url=${TARBALL_URL}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: guruswarupa/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHA256="${{ steps.npm.outputs.sha256 }}"
+          FORMULA_PATH="homebrew-tap/Formula/gitxplain.rb"
+          mkdir -p "$(dirname "${FORMULA_PATH}")"
+          cat > "${FORMULA_PATH}" <<EOF
+          class Gitxplain < Formula
+            desc "AI-powered Git commit explainer CLI"
+            homepage "https://github.com/guruswarupa/gitxplain"
+            url "https://registry.npmjs.org/gitxplain/-/gitxplain-${VERSION}.tgz"
+            sha256 "${SHA256}"
+            license "MIT"
+
+            depends_on "node"
+
+            def install
+              libexec.install Dir["package/*"]
+              bin.install_symlink libexec/"cli/index.js" => "gitxplain"
+              bin.install_symlink libexec/"cli/index.js" => "gitxplore"
+            end
+
+            test do
+              assert_match "gitxplain", shell_output("#{bin}/gitxplain --help")
+            end
+          end
+          EOF
+
+      - name: Commit and push Homebrew tap changes
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gitxplain.rb
+          if git diff --cached --quiet; then
+            echo "No Homebrew formula changes to commit."
+            exit 0
+          fi
+          git commit -m "gitxplain ${GITHUB_REF_NAME}"
+          git push
+
+      - name: Create GitHub release and upload Debian package
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.meta.outputs.deb_path }}
+
+      - name: Print AUR update instructions
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHA256="${{ steps.npm.outputs.sha256 }}"
+          echo "Manual AUR update steps:"
+          echo "1. Update packaging/aur/PKGBUILD with pkgver=${VERSION} and sha256sums=('${SHA256}')."
+          echo "2. Run: makepkg --printsrcinfo > .SRCINFO"
+          echo "3. Commit PKGBUILD and .SRCINFO to the AUR git repository and push."

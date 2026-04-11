@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -192,6 +193,74 @@ test("writePipelineFiles creates ci and release workflows", () => {
     assert.match(releaseWorkflow, /name: Release/);
     assert.match(releaseWorkflow, /NODE_AUTH_TOKEN/);
     assert.match(releaseWorkflow, /npm publish/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("writePipelineFiles creates packaging-aware release workflow for node CLI repos", () => {
+  const cwd = createTempRepo();
+
+  try {
+    execFileSync("git", ["init"], {
+      cwd,
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:demo/gitxplain.git"], {
+      cwd,
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+
+    writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "gitxplain",
+          version: "1.0.0",
+          description: "AI-powered Git commit explainer CLI",
+          license: "MIT",
+          bin: {
+            gitxplain: "./cli/index.js",
+            gitxplore: "./cli/index.js"
+          },
+          scripts: {
+            test: "node --test"
+          }
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(path.join(cwd, "package-lock.json"), "{}");
+    mkdirSync(path.join(cwd, "scripts"), { recursive: true });
+    writeFileSync(path.join(cwd, "scripts", "build-deb.sh"), "#!/usr/bin/env bash\n");
+    mkdirSync(path.join(cwd, "packaging", "homebrew-tap", "Formula"), { recursive: true });
+    writeFileSync(path.join(cwd, "packaging", "homebrew-tap", "Formula", "gitxplain.rb"), "class Gitxplain < Formula\nend\n");
+    mkdirSync(path.join(cwd, "packaging", "aur"), { recursive: true });
+    writeFileSync(path.join(cwd, "packaging", "aur", "PKGBUILD"), "pkgname=gitxplain\n");
+
+    const analysis = inspectRepositoryForPipeline(cwd);
+    const selection = analysis.options.find((option) => option.id === "ci-release");
+    const result = writePipelineFiles(cwd, analysis, selection);
+    const releaseWorkflow = readFileSync(path.join(cwd, ".github/workflows/release.yml"), "utf8");
+
+    assert.equal(
+      result.notes.includes("Add an `NPM_TOKEN` repository secret before pushing a release tag."),
+      true
+    );
+    assert.equal(
+      result.notes.includes("Add a `HOMEBREW_TAP_TOKEN` repository secret so CI can update your tap repository."),
+      true
+    );
+    assert.equal(
+      result.notes.includes("AUR updates are still manual. The generated release workflow prints the exact PKGBUILD and .SRCINFO refresh steps."),
+      true
+    );
+    assert.match(releaseWorkflow, /run: \.\/scripts\/build-deb\.sh/);
+    assert.match(releaseWorkflow, /HOMEBREW_TAP_TOKEN/);
+    assert.match(releaseWorkflow, /repository: demo\/homebrew-tap/);
+    assert.match(releaseWorkflow, /softprops\/action-gh-release@v2/);
+    assert.match(releaseWorkflow, /Manual AUR update steps:/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

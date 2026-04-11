@@ -183,6 +183,11 @@ test("writePipelineFiles creates ci and release workflows", () => {
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml"
     ]);
+    assert.deepEqual(result.updatedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ]);
+    assert.deepEqual(result.unchangedFiles, []);
     assert.equal(result.notes.includes("Add an `NPM_TOKEN` repository secret before pushing a release tag."), true);
 
     const ciWorkflow = readFileSync(path.join(cwd, ".github/workflows/ci.yml"), "utf8");
@@ -244,6 +249,11 @@ test("writePipelineFiles creates packaging-aware release workflow for node CLI r
     const result = writePipelineFiles(cwd, analysis, selection);
     const releaseWorkflow = readFileSync(path.join(cwd, ".github/workflows/release.yml"), "utf8");
 
+    assert.deepEqual(result.updatedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ]);
+    assert.deepEqual(result.unchangedFiles, []);
     assert.equal(
       result.notes.includes("Add an `NPM_TOKEN` repository secret before pushing a release tag."),
       true
@@ -262,6 +272,45 @@ test("writePipelineFiles creates packaging-aware release workflow for node CLI r
     assert.match(releaseWorkflow, /repository: demo\/homebrew-tap/);
     assert.match(releaseWorkflow, /softprops\/action-gh-release@v2/);
     assert.match(releaseWorkflow, /Manual AUR update steps:/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("writePipelineFiles reports unchanged files when generated contents already match", () => {
+  const cwd = createTempRepo();
+
+  try {
+    writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "demo-cli",
+          version: "1.0.0",
+          scripts: {
+            test: "node --test"
+          }
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(path.join(cwd, "package-lock.json"), "{}");
+
+    const analysis = inspectRepositoryForPipeline(cwd);
+    const selection = analysis.options.find((option) => option.id === "ci-release");
+    const first = writePipelineFiles(cwd, analysis, selection);
+    const second = writePipelineFiles(cwd, analysis, selection);
+
+    assert.deepEqual(first.updatedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ]);
+    assert.deepEqual(second.updatedFiles, []);
+    assert.deepEqual(second.unchangedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml"
+    ]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

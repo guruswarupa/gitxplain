@@ -967,13 +967,21 @@ export function writePipelineFiles(cwd, analysis, selection) {
   mkdirSync(workflowDir, { recursive: true });
 
   const writtenFiles = [];
+  const updatedFiles = [];
+  const unchangedFiles = [];
   const notes = [];
 
   const writeWorkflow = (relativePath, contents) => {
     const absolutePath = path.join(cwd, relativePath);
     mkdirSync(path.dirname(absolutePath), { recursive: true });
+    const existingContents = existsSync(absolutePath) ? readFileSync(absolutePath, "utf8") : null;
     writeFileSync(absolutePath, contents, "utf8");
     writtenFiles.push(relativePath);
+    if (existingContents === contents) {
+      unchangedFiles.push(relativePath);
+    } else {
+      updatedFiles.push(relativePath);
+    }
   };
 
   if (selection.id === "ci" || selection.id === "ci-release") {
@@ -1018,5 +1026,5 @@ export function writePipelineFiles(cwd, analysis, selection) {
     notes.push("This option only creates the container workflow. Run `gitxplain --pipeline` again if you also want CI verification.");
   }
 
-  return { writtenFiles, notes };
+  return { writtenFiles, updatedFiles, unchangedFiles, notes };
 }

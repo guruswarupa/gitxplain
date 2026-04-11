@@ -5,6 +5,7 @@ import {
   readdirSync,
   writeFileSync
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 const WORKFLOW_DIR = ".github/workflows";
@@ -64,6 +65,56 @@ function detectNodeVersion(cwd, packageJson) {
   };
 }
 
+function detectGitHubRepository(cwd) {
+  try {
+    const remote = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+
+    const match =
+      remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/i) ??
+      remote.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/i);
+
+    if (!match) {
+      return null;
+    }
+
+    return {
+      owner: match[1],
+      repo: match[2],
+      slug: `${match[1]}/${match[2]}`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function detectNodePackaging(cwd, packageJson) {
+  const packageName = (packageJson?.name ?? "package").replace(/^@[^/]+\//, "");
+  const githubRepository = detectGitHubRepository(cwd);
+  const homebrewFormulaPath = `packaging/homebrew-tap/Formula/${packageName}.rb`;
+
+  return {
+    deb: fileExists(cwd, "scripts/build-deb.sh"),
+    aur: fileExists(cwd, "packaging/aur/PKGBUILD"),
+    homebrew: fileExists(cwd, homebrewFormulaPath),
+    homebrewFormulaPath,
+    homebrewTapRepo: githubRepository ? `${githubRepository.owner}/homebrew-tap` : null,
+    githubRepository
+  };
+}
+
+function toHomebrewClassName(packageName) {
+  return packageName
+    .replace(/^@[^/]+\//, "")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join("");
+}
+
 function detectNodeProject(cwd) {
   if (!fileExists(cwd, "package.json")) {
     return null;
@@ -75,12 +126,14 @@ function detectNodeProject(cwd) {
   const packageManager = detectPackageManager(cwd);
   const releaseSupported = packageJson.private !== true && typeof packageJson.name === "string";
   const packSupported = packageJson.private !== true || Boolean(packageJson.bin);
+  const packaging = detectNodePackaging(cwd, packageJson);
 
   return {
     type: "node",
     displayName: packageJson.name || path.basename(cwd),
     packageManager,
     packageJson,
+    packaging,
     nodeVersion,
     commands: {
       install:
@@ -440,8 +493,10 @@ export function inspectRepositoryForPipeline(cwd) {
       id: "ci-release",
       label: `CI plus ${primary.release.type} release automation`,
       description:
-        primary.type === "node"
-          ? "Publishes to npm when you push a version tag like v1.2.3."
+        primary.type === "node" && (primary.packaging?.deb || primary.packaging?.homebrew || primary.packaging?.aur)
+          ? "Publishes to npm on version tags, builds Debian packages, updates Homebrew when configured, and prints AUR update instructions."
+          : primary.type === "node"
+            ? "Publishes to npm when you push a version tag like v1.2.3."
           : primary.type === "python"
             ? "Builds and publishes to PyPI when you push a version tag like v1.2.3."
             : "Publishes to crates.io when you push a version tag like v1.2.3.",
@@ -569,13 +624,138 @@ export function buildReleaseWorkflow(context) {
   }
 
   if (context.type === "node") {
+    const packaging = context.packaging ?? {};
+    const githubRepository = packaging.githubRepository?.slug ?? null;
+    const homebrewTapRepo = packaging.homebrewTapRepo ?? null;
+    const packageName = context.packageJson?.name ?? context.displayName ?? "package";
+    const formulaClassName = toHomebrewClassName(packageName);
+    const binEntries = Object.entries(context.packageJson?.bin ?? {});
+    const executablePath = (binEntries[0]?.[1] ?? "cli/index.js").replace(/^\.\//, "");
+    const executableNames = binEntries.length > 0 ? binEntries.map(([name]) => name) : [packageName];
+
+    if (packaging.deb || packaging.homebrew || packaging.aur) {
+      return [
+        "name: Release",
+        "",
+        "on:",
+        "  push:",
+        "    tags:",
+        "      - 'v*'",
+        "",
+        "permissions:",
+        "  contents: write",
+        "",
+        "jobs:",
+        "  release:",
+        "    runs-on: ubuntu-latest",
+        "",
+        "    steps:",
+        "      - name: Checkout",
+        "        uses: actions/checkout@v4",
+        buildNodeReleaseSetup(context),
+        "      - name: Derive release metadata",
+        "        id: meta",
+        "        run: |",
+        "          VERSION=\"${GITHUB_REF_NAME#v}\"",
+        "          echo \"version=${VERSION}\" >> \"${GITHUB_OUTPUT}\"",
+        packaging.deb ? `          echo "deb_path=dist/${packageName}_\${VERSION}_all.deb" >> "\${GITHUB_OUTPUT}"` : "",
+        context.commands.test ? formatRunStep("Test", context.commands.test) : "",
+        context.commands.build ? formatRunStep("Build", context.commands.build) : "",
+        packaging.deb ? formatRunStep("Build Debian package", "./scripts/build-deb.sh") : "",
+        "      - name: Publish to npm",
+        "        env:",
+        "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+        "        run: npm publish",
+        "      - name: Compute npm tarball SHA-256",
+        "        id: npm",
+        "        run: |",
+        "          VERSION=\"${{ steps.meta.outputs.version }}\"",
+        `          TARBALL_URL="https://registry.npmjs.org/${packageName}/-/${packageName}-\${VERSION}.tgz"`,
+        `          curl -fsSL "\${TARBALL_URL}" -o "${packageName}-\${VERSION}.tgz"`,
+        `          SHA256="$(sha256sum "${packageName}-\${VERSION}.tgz" | awk '{print $1}')"`,
+        "          echo \"tarball_url=${TARBALL_URL}\" >> \"${GITHUB_OUTPUT}\"",
+        "          echo \"sha256=${SHA256}\" >> \"${GITHUB_OUTPUT}\"",
+        packaging.homebrew && homebrewTapRepo
+          ? [
+              "      - name: Checkout Homebrew tap",
+              "        uses: actions/checkout@v4",
+              "        with:",
+              `          repository: ${homebrewTapRepo}`,
+              "          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}",
+              "          path: homebrew-tap",
+              "      - name: Update Homebrew formula",
+              "        run: |",
+              "          VERSION=\"${{ steps.meta.outputs.version }}\"",
+              "          SHA256=\"${{ steps.npm.outputs.sha256 }}\"",
+              `          FORMULA_PATH="homebrew-tap/Formula/${packageName}.rb"`,
+              "          mkdir -p \"$(dirname \"${FORMULA_PATH}\")\"",
+              "          cat > \"${FORMULA_PATH}\" <<EOF",
+              `          class ${formulaClassName} < Formula`,
+              `            desc ${JSON.stringify(context.packageJson?.description ?? "")}`,
+              `            homepage ${JSON.stringify(githubRepository ? `https://github.com/${githubRepository}` : "")}`,
+              `            url "https://registry.npmjs.org/${packageName}/-/${packageName}-${"${VERSION}"}.tgz"`,
+              "            sha256 \"${SHA256}\"",
+              `            license ${JSON.stringify(context.packageJson?.license ?? "MIT")}`,
+              "",
+              "            depends_on \"node\"",
+              "",
+              "            def install",
+              "              libexec.install Dir[\"package/*\"]",
+              ...executableNames.map((name) => `              bin.install_symlink libexec/"${executablePath}" => "${name}"`),
+              "            end",
+              "",
+              "            test do",
+              `              assert_match ${JSON.stringify(executableNames[0])}, shell_output("#{bin}/${executableNames[0]} --help")`,
+              "            end",
+              "          end",
+              "          EOF",
+              "      - name: Commit and push Homebrew tap changes",
+              "        working-directory: homebrew-tap",
+              "        run: |",
+              "          git config user.name \"github-actions[bot]\"",
+              "          git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"",
+              `          git add Formula/${packageName}.rb`,
+              "          if git diff --cached --quiet; then",
+              "            echo \"No Homebrew formula changes to commit.\"",
+              "            exit 0",
+              "          fi",
+              "          git commit -m \"gitxplain ${GITHUB_REF_NAME}\"",
+              "          git push"
+            ].join("\n")
+          : "",
+        packaging.deb
+          ? [
+              "      - name: Create GitHub release and upload Debian package",
+              "        uses: softprops/action-gh-release@v2",
+              "        with:",
+              "          files: ${{ steps.meta.outputs.deb_path }}"
+            ].join("\n")
+          : "",
+        packaging.aur
+          ? [
+              "      - name: Print AUR update instructions",
+              "        run: |",
+              "          VERSION=\"${{ steps.meta.outputs.version }}\"",
+              "          SHA256=\"${{ steps.npm.outputs.sha256 }}\"",
+              "          echo \"Manual AUR update steps:\"",
+              "          echo \"1. Update packaging/aur/PKGBUILD with pkgver=${VERSION} and sha256sums=('${SHA256}').\"",
+              "          echo \"2. Run: makepkg --printsrcinfo > .SRCINFO\"",
+              "          echo \"3. Commit PKGBUILD and .SRCINFO to the AUR git repository and push.\""
+            ].join("\n")
+          : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .concat("\n");
+    }
+
     return [
       "name: Release",
       "",
       "on:",
       "  push:",
       "    tags:",
-      "      - 'v*.*.*'",
+      "      - 'v*'",
       "",
       "jobs:",
       "  publish:",
@@ -605,7 +785,7 @@ export function buildReleaseWorkflow(context) {
       "on:",
       "  push:",
       "    tags:",
-      "      - 'v*.*.*'",
+      "      - 'v*'",
       "",
       "jobs:",
       "  publish:",
@@ -635,7 +815,7 @@ export function buildReleaseWorkflow(context) {
     "on:",
     "  push:",
     "    tags:",
-    "      - 'v*.*.*'",
+    "      - 'v*'",
     "",
     "jobs:",
     "  publish:",
@@ -660,7 +840,7 @@ export function buildContainerWorkflow() {
     "  push:",
     "    branches: [main, master]",
     "    tags:",
-    "      - 'v*.*.*'",
+    "      - 'v*'",
     "  pull_request:",
     "",
     "jobs:",
@@ -802,6 +982,12 @@ export function writePipelineFiles(cwd, analysis, selection) {
 
     if (analysis.primary.release.type === "npm") {
       notes.push("Add an `NPM_TOKEN` repository secret before pushing a release tag.");
+      if (analysis.primary.packaging?.homebrew) {
+        notes.push("Add a `HOMEBREW_TAP_TOKEN` repository secret so CI can update your tap repository.");
+      }
+      if (analysis.primary.packaging?.aur) {
+        notes.push("AUR updates are still manual. The generated release workflow prints the exact PKGBUILD and .SRCINFO refresh steps.");
+      }
     } else if (analysis.primary.release.type === "pypi") {
       notes.push("Add a `PYPI_TOKEN` repository secret before pushing a release tag.");
     } else if (analysis.primary.release.type === "crates") {

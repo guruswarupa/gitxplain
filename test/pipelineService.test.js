@@ -257,6 +257,7 @@ test("writePipelineFiles creates packaging-aware release workflow for node CLI r
       true
     );
     assert.match(releaseWorkflow, /run: \.\/scripts\/build-deb\.sh/);
+    assert.match(releaseWorkflow, /if: startsWith\(github\.ref_name, 'v'\)/);
     assert.match(releaseWorkflow, /HOMEBREW_TAP_TOKEN/);
     assert.match(releaseWorkflow, /repository: demo\/homebrew-tap/);
     assert.match(releaseWorkflow, /softprops\/action-gh-release@v2/);

@@ -46,6 +46,43 @@ Supported providers:
 - A Git repository in your current working directory
 - An API key for your chosen provider, or a local Ollama instance
 
+## Installation
+
+Install from npm:
+
+```bash
+npm install -g gitxplain
+```
+
+Install from bun:
+
+```bash
+bun install -g gitxplain
+```
+
+Install with Homebrew:
+
+```bash
+brew tap guruswarupa/homebrew-tap
+brew install gitxplain
+```
+
+Install from the AUR:
+
+```bash
+yay -S gitxplain
+```
+
+```bash
+paru -S gitxplain
+```
+
+Install from a Debian package downloaded from GitHub Releases:
+
+```bash
+sudo apt install ./gitxplain_<version>_all.deb
+```
+
 Optional advanced environment variables:
 
 - `LLM_PROVIDER` default: `openai`

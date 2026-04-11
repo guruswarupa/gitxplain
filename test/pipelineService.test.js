@@ -197,6 +197,8 @@ test("writePipelineFiles creates ci and release workflows", () => {
     assert.match(ciWorkflow, /run: npm test/);
     assert.match(releaseWorkflow, /name: Release/);
     assert.match(releaseWorkflow, /NODE_AUTH_TOKEN/);
+    assert.match(releaseWorkflow, /Check whether npm version already exists/);
+    assert.match(releaseWorkflow, /if: steps\.npm_version\.outputs\.published != 'true'/);
     assert.match(releaseWorkflow, /npm publish/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -268,6 +270,8 @@ test("writePipelineFiles creates packaging-aware release workflow for node CLI r
     );
     assert.match(releaseWorkflow, /run: \.\/scripts\/build-deb\.sh/);
     assert.match(releaseWorkflow, /if: startsWith\(github\.ref_name, 'v'\)/);
+    assert.match(releaseWorkflow, /Check whether npm version already exists/);
+    assert.match(releaseWorkflow, /if: steps\.npm_version\.outputs\.published != 'true'/);
     assert.match(releaseWorkflow, /HOMEBREW_TAP_TOKEN/);
     assert.match(releaseWorkflow, /repository: demo\/homebrew-tap/);
     assert.match(releaseWorkflow, /softprops\/action-gh-release@v2/);

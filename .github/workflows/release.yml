@@ -24,9 +24,17 @@ jobs:
       - name: Derive release metadata
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "deb_path=dist/gitxplain_${VERSION}_all.deb" >> "${GITHUB_OUTPUT}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+
+          if [ "${TAG_VERSION}" != "${PACKAGE_VERSION}" ]; then
+            echo "Tag version (${TAG_VERSION}) does not match package.json version (${PACKAGE_VERSION})."
+            echo "Update package.json before cutting the release tag, or retag the release to match."
+            exit 1
+          fi
+
+          echo "version=${TAG_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "deb_path=dist/gitxplain_${PACKAGE_VERSION}_all.deb" >> "${GITHUB_OUTPUT}"
       - name: Test
         run: npm test
       - name: Build Debian package

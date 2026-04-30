@@ -1,0 +1,25 @@
+/* Blue color for main headings */
+h2, .main-heading {
+  color: #1976d2 !important;
+  font-size: 8rem !important; /* Maximum size for gitXplain heading */
+}
+
+/* Make subheadings (feature headings) larger than points */
+h5, h6 {
+  font-size: 1.25rem !important;
+  font-weight: 600;
+  color: #333;
+}
+
+/* Make bullet points normal size */
+ul, li {
+  font-size: 1rem;
+}
+
+/* Subpoint under main title styling */
+.subtitle-under-main {
+  font-size: 1.25rem;
+  color: #555;
+  margin-top: -1rem;
+  margin-bottom: 1.5rem;
+}

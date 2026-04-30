@@ -1,0 +1,7 @@
+{
+  "buildCommand": "bash build.sh",
+  "outputDirectory": "site",
+  "installCommand": "echo 'Skipping default install'",
+  "framework": null,
+  "devCommand": null
+}
